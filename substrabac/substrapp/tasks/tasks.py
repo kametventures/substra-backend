@@ -2,7 +2,6 @@ from __future__ import absolute_import, unicode_literals
 
 import os
 import shutil
-import tempfile
 from os import path
 import json
 from multiprocessing.managers import BaseManager
@@ -25,32 +24,16 @@ from substrapp.tasks.exception_handler import compute_error_code
 
 
 def get_objective(subtuple):
-    from substrapp.models import Objective
-
     objective_hash = subtuple['objective']['hash']
+    objective_metadata = get_object_from_ledger(objective_hash, 'queryObjective')
 
-    try:
-        objective = Objective.objects.get(pk=objective_hash)
-    except ObjectDoesNotExist:
-        objective = None
+    objective_content = get_asset_content(
+        objective_metadata['metrics']['storageAddress'],
+        objective_metadata['owner'],
+        objective_metadata['metrics']['hash'],
+    )
 
-    # get objective from ledger as it is not available in local db and store it in local db
-    if objective is None or not objective.metrics:
-        objective_metadata = get_object_from_ledger(objective_hash, 'queryObjective')
-
-        content = get_asset_content(
-            objective_metadata['metrics']['storageAddress'],
-            objective_metadata['owner'],
-            objective_metadata['metrics']['hash'],
-        )
-
-        objective, _ = Objective.objects.update_or_create(pkhash=objective_hash, validated=True)
-
-        tmp_file = tempfile.TemporaryFile()
-        tmp_file.write(content)
-        objective.metrics.save('metrics.archive', tmp_file)
-
-    return objective.metrics.read()
+    return objective_content
 
 
 def get_algo(subtuple):
@@ -116,7 +99,7 @@ def _put_model(subtuple, subtuple_directory, model_content, model_hash, traintup
             raise Exception('Model Hash in Subtuple is not the same as in local db')
 
         if not os.path.exists(model_dst_path):
-            os.link(model.file.path, model_dst_path)
+            os.symlink(model.file.path, model_dst_path)
         else:
             # verify that local subtuple model file is not corrupted
             if get_hash(model_dst_path, traintuple_key) != model_hash:
@@ -148,7 +131,7 @@ def put_opener(subtuple, subtuple_directory):
 
     opener_dst_path = path.join(subtuple_directory, 'opener/opener.py')
     if not os.path.exists(opener_dst_path):
-        os.link(datamanager.data_opener.path, opener_dst_path)
+        os.symlink(datamanager.data_opener.path, opener_dst_path)
     else:
         # verify that local subtuple data opener file is not corrupted
         if get_hash(opener_dst_path) != data_opener_hash:
@@ -182,9 +165,9 @@ def put_algo(subtuple_directory, algo_content):
     uncompress_content(algo_content, subtuple_directory)
 
 
-def build_subtuple_folders(subtuple):
+def build_subtuple_folders(subtuple, root_folder_name='subtuple'):
     # create a folder named `subtuple['key']` in /medias/subtuple/ with 5 subfolders opener, data, model, pred, metrics
-    subtuple_directory = path.join(getattr(settings, 'MEDIA_ROOT'), 'subtuple', subtuple['key'])
+    subtuple_directory = path.join(getattr(settings, 'MEDIA_ROOT'), root_folder_name, subtuple['key'])
     create_directory(subtuple_directory)
 
     for folder in ['opener', 'data', 'model', 'pred', 'metrics']:
@@ -389,10 +372,17 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
     #   - Verify that real paths are safe
     #   - Try to see if it's clean to do that
     ##########################################
+
     symlinks_volume = {}
     for subfolder in os.listdir(data_path):
         real_path = os.path.realpath(os.path.join(data_path, subfolder))
         symlinks_volume[real_path] = {'bind': f'{real_path}', 'mode': 'ro'}
+
+    for subtuple_folder in ['opener', 'model', 'metrics']:
+        for subitem in os.listdir(path.join(subtuple_directory, subtuple_folder)):
+            real_path = os.path.realpath(os.path.join(subtuple_directory, subtuple_folder, subitem))
+            if real_path != os.path.join(subtuple_directory, subtuple_folder, subitem):
+                symlinks_volume[real_path] = {'bind': f'{real_path}', 'mode': 'ro'}
 
     ##########################################
 

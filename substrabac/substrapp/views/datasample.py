@@ -305,7 +305,7 @@ def path_leaf(path):
 
 @app.task(bind=True, ignore_result=False)
 def compute_dryrun(self, data_samples, data_manager_keys, paths_to_remove):
-    from shutil import copy
+    from shutil import copyfile
     from substrapp.models import DataManager
 
     client = docker.from_env()
@@ -313,7 +313,7 @@ def compute_dryrun(self, data_samples, data_manager_keys, paths_to_remove):
     # Name of the dry-run subtuple (not important)
     pkhash = data_samples[0]['pkhash']
     dryrun_uuid = f'{pkhash}_{uuid.uuid4().hex}'
-    subtuple_directory = build_subtuple_folders({'key': dryrun_uuid})
+    subtuple_directory = build_subtuple_folders({'key': dryrun_uuid}, root_folder_name='dryrun')
     data_path = os.path.join(subtuple_directory, 'data')
     volumes = {}
 
@@ -328,7 +328,7 @@ def compute_dryrun(self, data_samples, data_manager_keys, paths_to_remove):
 
         for datamanager_key in data_manager_keys:
             datamanager = DataManager.objects.get(pk=datamanager_key)
-            copy(datamanager.data_opener.path, os.path.join(subtuple_directory, 'opener/opener.py'))
+            copyfile(datamanager.data_opener.path, os.path.join(subtuple_directory, 'opener/opener.py'))
 
             opener_file = os.path.join(subtuple_directory, 'opener/opener.py')
             data_sample_docker_path = os.path.join(getattr(settings, 'PROJECT_ROOT'), 'containers/dryrun_data_sample')

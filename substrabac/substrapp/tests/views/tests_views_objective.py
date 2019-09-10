@@ -301,6 +301,7 @@ class ObjectiveViewTests(APITestCase):
                 'owner': 'external_node_id'
             }
             mget_asset_content.return_value = opener_content
+
             objective_compute_dryrun(zip_path, test_data_manager_key, pkhash)
 
     def test_objective_leaderboard_sort(self):

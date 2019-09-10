@@ -170,6 +170,8 @@ def generate_docker_compose_file(conf, launch_settings, nobasicauth=False):
         if launch_settings == 'dev':
             fixtures_command = f"python manage.py loaddata nodes-{org_name_stripped}"
 
+        MEDIA_ROOT = f'{SUBSTRA_FOLDER}/medias/{org_name_stripped}'
+
         backend = {
             'container_name': f'{org_name_stripped}.substrabac',
             'labels': ['substra'],
@@ -181,9 +183,15 @@ def generate_docker_compose_file(conf, launch_settings, nobasicauth=False):
             'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
             'environment': backend_global_env.copy(),
             'volumes': [
-                f'{SUBSTRA_FOLDER}/medias:{SUBSTRA_FOLDER}/medias:rw',
+                f'{MEDIA_ROOT}/algos:{MEDIA_ROOT}/algos:rw',
+                f'{MEDIA_ROOT}/datamanagers:{MEDIA_ROOT}/datamanagers:rw',
+                f'{MEDIA_ROOT}/datasamples:{MEDIA_ROOT}/datasamples:rw',
+                f'{MEDIA_ROOT}/objectives:{MEDIA_ROOT}/objectives:rw',
+                f'{MEDIA_ROOT}/models:{MEDIA_ROOT}/models:ro',
+                f'{MEDIA_ROOT}/dryrunmedias:{MEDIA_ROOT}/dryrunmedias:rw',
                 f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro',
-                f'{SUBSTRA_FOLDER}/static:/usr/src/app/substrabac/statics'] + hlf_volumes,
+                f'{SUBSTRA_FOLDER}/static:/usr/src/app/substrabac/statics:rw'
+            ] + hlf_volumes,
             'depends_on': ['postgresql', 'rabbit']}
 
         scheduler = {
@@ -213,8 +221,14 @@ def generate_docker_compose_file(conf, launch_settings, nobasicauth=False):
             'environment': backend_global_env.copy(),
             'volumes': [
                 '/var/run/docker.sock:/var/run/docker.sock',
-                f'{SUBSTRA_FOLDER}/medias:{SUBSTRA_FOLDER}/medias:rw',
-                f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro'] + hlf_volumes,
+                f'{MEDIA_ROOT}/algos:{MEDIA_ROOT}/algos:ro',
+                f'{MEDIA_ROOT}/datamanagers:{MEDIA_ROOT}/datamanagers:ro',
+                f'{MEDIA_ROOT}/datasamples:{MEDIA_ROOT}/datasamples:ro',
+                f'{MEDIA_ROOT}/objectives:{MEDIA_ROOT}/objectives:ro',
+                f'{MEDIA_ROOT}/models:{MEDIA_ROOT}/models:rw',
+                f'{MEDIA_ROOT}/subtuple:{MEDIA_ROOT}/subtuple:rw',
+                f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro'
+            ] + hlf_volumes,
             'depends_on': [f'substrabac{org_name_stripped}', 'rabbit']}
 
         dryrunner = {
@@ -230,8 +244,13 @@ def generate_docker_compose_file(conf, launch_settings, nobasicauth=False):
             'environment': backend_global_env.copy(),
             'volumes': [
                 '/var/run/docker.sock:/var/run/docker.sock',
-                f'{SUBSTRA_FOLDER}/medias:{SUBSTRA_FOLDER}/medias:rw',
-                f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro'] + hlf_volumes,
+                f'{MEDIA_ROOT}/datamanagers:{MEDIA_ROOT}/datamanagers:ro',
+                f'{MEDIA_ROOT}/objectives:{MEDIA_ROOT}/objectives:ro',
+                f'{MEDIA_ROOT}/datasamples:{MEDIA_ROOT}/datasamples:ro',
+                f'{MEDIA_ROOT}/dryrun:{MEDIA_ROOT}/dryrun:rw',
+                f'{MEDIA_ROOT}/dryrunmedias:{MEDIA_ROOT}/dryrunmedias:ro',
+                f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro'
+            ] + hlf_volumes,
             'depends_on': [f'substrabac{org_name_stripped}', 'rabbit']}
 
         # Check if we have nvidia docker
@@ -239,7 +258,7 @@ def generate_docker_compose_file(conf, launch_settings, nobasicauth=False):
             worker['runtime'] = 'nvidia'
 
         if launch_settings == 'dev':
-            media_root = f'MEDIA_ROOT={SUBSTRA_FOLDER}/medias/{org_name_stripped}'
+            media_root = f'MEDIA_ROOT={MEDIA_ROOT}'
             worker['environment'].append(media_root)
             dryrunner['environment'].append(media_root)
             backend['environment'].append(media_root)

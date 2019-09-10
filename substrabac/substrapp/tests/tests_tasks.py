@@ -21,7 +21,7 @@ from substrapp.tasks.tasks import (build_subtuple_folders, get_algo, get_model, 
 
 from .common import (get_sample_algo, get_sample_script, get_sample_zip_data_sample, get_sample_tar_data_sample,
                      get_sample_model)
-from .common import FakeClient, FakeObjective, FakeDataManager, FakeModel, FakeRequest
+from .common import FakeClient, FakeDataManager, FakeModel, FakeRequest
 from . import assets
 from node.models import OutgoingNode
 
@@ -463,28 +463,26 @@ class TasksTests(APITestCase):
         metrics_content = self.script.read().encode('utf-8')
         objective_hash = get_hash(self.script)
 
-        with mock.patch('substrapp.models.Objective.objects.get') as mget:
-
-            mget.return_value = FakeObjective()
-
-            objective = get_objective({'objective': {'hash': objective_hash,
-                                                     'metrics': ''}})
-            self.assertTrue(isinstance(objective, bytes))
-            self.assertEqual(objective, b'foo')
+        objective_asset = {
+            'metrics': {
+                'storageAddress': assets.objective[0]['metrics']['storageAddress'],
+                'hash': objective_hash
+            },
+            'owner': assets.objective[0]['owner']
+        }
 
         with mock.patch('substrapp.tasks.utils.get_remote_file') as mget_remote_file, \
-                mock.patch('substrapp.tasks.tasks.get_object_from_ledger'), \
-                mock.patch('substrapp.tasks.utils.authenticate_worker'),\
-                mock.patch('substrapp.models.Objective.objects.update_or_create') as mupdate_or_create:
+                mock.patch('substrapp.tasks.tasks.get_object_from_ledger') as mget_object_from_ledger, \
+                mock.patch('substrapp.tasks.utils.get_owner') as mget_owner:
 
-            mget.return_value = FakeObjective()
             mget_remote_file.return_value = metrics_content
-            mupdate_or_create.return_value = FakeObjective(), True
+            mget_object_from_ledger.return_value = objective_asset
+            mget_owner.return_value = assets.objective[0]['owner']
 
             objective = get_objective({'objective': {'hash': objective_hash,
                                                      'metrics': ''}})
             self.assertTrue(isinstance(objective, bytes))
-            self.assertEqual(objective, b'foo')
+            self.assertEqual(objective, metrics_content)
 
     def test_compute_docker(self):
         cpu_set, gpu_set = None, None

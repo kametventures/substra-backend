@@ -43,13 +43,14 @@ class ObjectiveViewSet(mixins.CreateModelMixin,
 
     def handle_dryrun(self, pkhash, metrics, test_data_manager_key):
         try:
-            dryrun_directory = os.path.join(getattr(settings, 'MEDIA_ROOT'), 'dryrun')
+            dryrun_directory = os.path.join(getattr(settings, 'MEDIA_ROOT'), 'dryrunmedias')
             create_directory(dryrun_directory)
 
             metrics_path = os.path.join(dryrun_directory, f'metrics_{pkhash}.archive')
 
             with open(metrics_path, 'wb') as fh:
                 fh.write(metrics.open().read())
+
             task = compute_dryrun.apply_async(
                 (metrics_path, test_data_manager_key, pkhash),
                 queue=f"{settings.LEDGER['name']}.dryrunner"
@@ -280,15 +281,13 @@ class ObjectiveViewSet(mixins.CreateModelMixin,
 @app.task(bind=True, ignore_result=False)
 def compute_dryrun(self, archive_path, test_data_manager_key, pkhash):
     if not test_data_manager_key:
-        os.remove(archive_path)
         raise Exception('Cannot do an objective dryrun without a data manager key.')
 
     dryrun_uuid = f'{pkhash}_{uuid.uuid4().hex}'
 
-    subtuple_directory = build_subtuple_folders({'key': dryrun_uuid})
+    subtuple_directory = build_subtuple_folders({'key': dryrun_uuid}, root_folder_name='dryrun')
     metrics_path = f'{subtuple_directory}/metrics'
     uncompress_path(archive_path, metrics_path)
-    os.remove(archive_path)
 
     datamanager = get_object_from_ledger(test_data_manager_key, 'queryDataManager')
     opener_content = get_asset_content(
