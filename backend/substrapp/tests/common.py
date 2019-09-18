@@ -3,7 +3,6 @@ from io import StringIO, BytesIO
 import os
 import base64
 
-
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.db import transaction
@@ -17,6 +16,9 @@ from users.serializers import CustomTokenObtainPairSerializer
 
 def generate_basic_auth_header(username, password):
     return 'Basic ' + base64.b64encode(f'{username}:{password}'.encode()).decode()
+
+def generate_jwt_auth_header(jwt):
+    return 'JWT ' + jwt
 
 
 def generate_jwt_auth_header(jwt):
