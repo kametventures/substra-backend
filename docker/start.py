@@ -67,20 +67,6 @@ def generate_docker_compose_file(conf, launch_settings):
     docker_compose = {
         'backend_services': {},
         'backend_tools': {
-            'postgresql': {
-                'container_name': 'postgresql',
-                'labels': ['substra'],
-                'image': 'substra/postgresql',
-                'restart': 'unless-stopped',
-                'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
-                'environment': [
-                    f'POSTGRES_USER={POSTGRES_USER}',
-                    f'USER={USER}',
-                    f'POSTGRES_PASSWORD={POSTGRES_PASSWORD}',
-                    f'POSTGRES_DB={POSTGRES_DB}'],
-                'volumes': [
-                    f'{SUBSTRA_FOLDER}/backup/postgres-data:/var/lib/postgresql/data'],
-            },
             'celerybeat': {
                 'container_name': 'celerybeat',
                 'labels': ['substra'],
@@ -102,6 +88,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 'hostname': 'rabbitmq',     # Must be set to be able to recover from volume
                 'restart': 'unless-stopped',
                 'image': 'rabbitmq:3-management',
+                'ports': [f'{RABBITMQ_PORT}:{RABBITMQ_PORT}'],
                 'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
                 'environment': [
                     f'RABBITMQ_DEFAULT_USER={RABBITMQ_DEFAULT_USER}',
