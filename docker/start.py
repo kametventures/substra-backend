@@ -190,7 +190,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 f'{SUBSTRA_FOLDER}/medias:{SUBSTRA_FOLDER}/medias:rw',
                 f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro',
                 f'{SUBSTRA_FOLDER}/static:/usr/src/app/backend/statics'] + hlf_volumes,
-            'depends_on': ['postgresql', 'rabbit']}
+            'depends_on': ['rabbit']}
 
         scheduler = {
             'container_name': f'{org_name_stripped}.scheduler',
@@ -204,7 +204,7 @@ def generate_docker_compose_file(conf, launch_settings):
             'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
             'environment': celery_global_env.copy(),
             'volumes': hlf_volumes,
-            'depends_on': [f'backend{org_name_stripped}', 'postgresql', 'rabbit']}
+            'depends_on': [f'backend{org_name_stripped}', 'rabbit']}
 
         worker = {
             'container_name': f'{org_name_stripped}.worker',
