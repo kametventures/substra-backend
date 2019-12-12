@@ -67,6 +67,7 @@ def generate_docker_compose_file(conf, launch_settings):
     docker_compose = {
         'backend_services': {},
         'backend_tools': {
+<<<<<<< HEAD
             'postgresql': {
                 'container_name': 'postgresql',
                 'labels': ['substra'],
@@ -82,6 +83,8 @@ def generate_docker_compose_file(conf, launch_settings):
                 'volumes': [
                     f'{SUBSTRA_FOLDER}/backup/postgres-data:/var/lib/postgresql/data'],
             },
+=======
+>>>>>>> 33aad1c2c50d94d1193ef3eccbc7e925deece6f4
             'celerybeat': {
                 'container_name': 'celerybeat',
                 'labels': ['substra'],
@@ -95,7 +98,7 @@ def generate_docker_compose_file(conf, launch_settings):
                     'PYTHONUNBUFFERED=1',
                     f'CELERY_BROKER_URL={CELERY_BROKER_URL}',
                     f'DJANGO_SETTINGS_MODULE=backend.settings.common'],
-                'depends_on': ['postgresql', 'rabbit']
+                'depends_on': ['rabbit']
             },
             'rabbit': {
                 'container_name': 'rabbit',
@@ -103,6 +106,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 'hostname': 'rabbitmq',     # Must be set to be able to recover from volume
                 'restart': 'unless-stopped',
                 'image': 'rabbitmq:3-management',
+                'ports': [f'{RABBITMQ_PORT}:{RABBITMQ_PORT}'],
                 'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
                 'environment': [
                     f'RABBITMQ_DEFAULT_USER={RABBITMQ_DEFAULT_USER}',
@@ -122,7 +126,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
                 'environment': [f'CELERY_BROKER_URL={CELERY_BROKER_URL}',
                                 'DJANGO_SETTINGS_MODULE=backend.settings.common'],
-                'depends_on': ['rabbit', 'postgresql']
+                'depends_on': ['rabbit']
             }
         },
         'path': os.path.join(dir_path, './docker-compose-dynamic.yaml')}
@@ -154,7 +158,7 @@ def generate_docker_compose_file(conf, launch_settings):
             f'LEDGER_CONFIG_FILE={SUBSTRA_FOLDER}/conf/{org_name}/substra-backend/conf.json',
 
             'PYTHONUNBUFFERED=1',
-            'DATABASE_HOST=postgresql',
+            'DATABASE_HOST=substra-postgres',
 
             f"TASK_CAPTURE_LOGS=True",
             f"TASK_CLEAN_EXECUTION_ENVIRONMENT=True",
@@ -204,7 +208,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 f'{SUBSTRA_FOLDER}/medias:{SUBSTRA_FOLDER}/medias:rw',
                 f'{SUBSTRA_FOLDER}/servermedias:{SUBSTRA_FOLDER}/servermedias:ro',
                 f'{SUBSTRA_FOLDER}/static:/usr/src/app/backend/statics'] + hlf_volumes,
-            'depends_on': ['postgresql', 'rabbit']}
+            'depends_on': ['rabbit']}
 
         scheduler = {
             'container_name': f'{org_name_stripped}.scheduler',
@@ -218,7 +222,7 @@ def generate_docker_compose_file(conf, launch_settings):
             'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
             'environment': celery_global_env.copy(),
             'volumes': hlf_volumes,
-            'depends_on': [f'backend{org_name_stripped}', 'postgresql', 'rabbit']}
+            'depends_on': [f'backend{org_name_stripped}', 'rabbit']}
 
         worker = {
             'container_name': f'{org_name_stripped}.worker',
