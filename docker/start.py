@@ -70,7 +70,7 @@ def generate_docker_compose_file(conf, launch_settings):
             'postgresql': {
                 'container_name': 'postgresql',
                 'labels': ['substra'],
-                'image': 'postgresql:10.5',
+                'image': 'postgres:10.5',
                 'restart': 'unless-stopped',
                 'ports': ['5432:5432'],
                 'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
