@@ -67,7 +67,6 @@ def generate_docker_compose_file(conf, launch_settings):
     docker_compose = {
         'backend_services': {},
         'backend_tools': {
-<<<<<<< HEAD
             'postgresql': {
                 'container_name': 'postgresql',
                 'labels': ['substra'],
@@ -83,8 +82,6 @@ def generate_docker_compose_file(conf, launch_settings):
                 'volumes': [
                     f'{SUBSTRA_FOLDER}/backup/postgres-data:/var/lib/postgresql/data'],
             },
-=======
->>>>>>> 33aad1c2c50d94d1193ef3eccbc7e925deece6f4
             'celerybeat': {
                 'container_name': 'celerybeat',
                 'labels': ['substra'],
