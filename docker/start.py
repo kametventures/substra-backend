@@ -67,27 +67,27 @@ def generate_docker_compose_file(conf, launch_settings):
     docker_compose = {
         'backend_services': {},
         'backend_tools': {
-            'postgresql': {
-                'container_name': 'postgresql',
-                'labels': ['substra'],
-                'image': 'postgres:10.5',
-                'restart': 'unless-stopped',
-                'ports': ['5432:5432'],
-                'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
-                'environment': [
-                    f'POSTGRES_USER={POSTGRES_USER}',
-                    f'USER={USER}',
-                    f'POSTGRES_PASSWORD={POSTGRES_PASSWORD}',
-                    f'POSTGRES_DB={POSTGRES_DB}'],
-                'volumes': [
-                    f'{SUBSTRA_FOLDER}/backup/postgres-data:/var/lib/postgresql/data'],
-                'command': f'createdb -U backend -E UTF8 backend_owkin && '
-                           f'psql -U backend -d backend_owkin -c "GRANT ALL PRIVILEGES ON DATABASE backend_owkin to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;" && '
-                           f'createdb -U backend -E UTF8 backend_chunantes && '
-                           f'psql -U backend -d backend_chunantes -c "GRANT ALL PRIVILEGES ON DATABASE backend_chunantes to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;" && '
-                           f'createdb -U backend -E UTF8 backend_clb && '
-                           f'psql -U backend -d backend_clb -c "GRANT ALL PRIVILEGES ON DATABASE backend_chunantes to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;"'
-            },
+            # 'postgresql': {
+            #     'container_name': 'postgresql',
+            #     'labels': ['substra'],
+            #     'image': 'postgres:10.5',
+            #     'restart': 'unless-stopped',
+            #     'ports': ['5432:5432'],
+            #     'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '5'}},
+            #     'environment': [
+            #         f'POSTGRES_USER={POSTGRES_USER}',
+            #         f'USER={USER}',
+            #         f'POSTGRES_PASSWORD={POSTGRES_PASSWORD}',
+            #         f'POSTGRES_DB={POSTGRES_DB}'],
+            #     'volumes': [
+            #         f'{SUBSTRA_FOLDER}/backup/postgres-data:/var/lib/postgresql/data'],
+            #     'command': f'createdb -U backend -E UTF8 backend_owkin && '
+            #                f'psql -U backend -d backend_owkin -c "GRANT ALL PRIVILEGES ON DATABASE backend_owkin to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;" && '
+            #                f'createdb -U backend -E UTF8 backend_chunantes && '
+            #                f'psql -U backend -d backend_chunantes -c "GRANT ALL PRIVILEGES ON DATABASE backend_chunantes to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;" && '
+            #                f'createdb -U backend -E UTF8 backend_clb && '
+            #                f'psql -U backend -d backend_clb -c "GRANT ALL PRIVILEGES ON DATABASE backend_chunantes to backend;ALTER ROLE backend WITH SUPERUSER CREATEROLE CREATEDB;"'
+            # },
             'celerybeat': {
                 'container_name': 'celerybeat',
                 'labels': ['substra'],
