@@ -161,7 +161,7 @@ def generate_docker_compose_file(conf, launch_settings):
             f'LEDGER_CONFIG_FILE={SUBSTRA_FOLDER}/conf/{org_name}/substra-backend/conf.json',
 
             'PYTHONUNBUFFERED=1',
-            'DATABASE_HOST=substra-postgres',
+            'DATABASE_HOST=postgresql',
 
             f"TASK_CAPTURE_LOGS=True",
             f"TASK_CLEAN_EXECUTION_ENVIRONMENT=True",
