@@ -1,4 +1,4 @@
-Django==2.1.15
+Django==2.2.10
 PyYAML==5.3
 celery==4.4.0
 checksumdir==1.1.7
@@ -28,4 +28,5 @@ six>=1.14.0
 tldextract==2.2.2
 uwsgi==2.0.18
 zxcvbn==4.4.28
-git+git://github.com/hyperledger/fabric-sdk-py.git@df19cf51ff4f21507869184901988c094658367a
+boto3==1.11.9
+git+git://github.com/hyperledger/fabric-sdk-py.git@5f6407810f07c6901b10cd3b518dd82aed7482fb

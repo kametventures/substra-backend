@@ -16,6 +16,9 @@ backend:
   settings: prod
   siteHost: localhost
   defaultDomain: localhost
+  uwsgiProcesses: 8
+  uwsgiThreads: 2
+  gzipModels: false
 
   image:
     repository: substrafoundation/substra-backend
@@ -172,6 +175,9 @@ celerybeat:
   tolerations: []
 
   affinity: {}
+
+celeryscheduler:
+  resources: {}
 
 celeryworker:
   replicaCount: 1
