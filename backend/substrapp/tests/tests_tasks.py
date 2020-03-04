@@ -99,7 +99,7 @@ class TasksTests(APITestCase):
                 # contents (by pkhash) are different
                 get_remote_file_content(remote_file, 'external_node_id', 'fake_pkhash')
 
-    def test_Ressource_Manager(self):
+    def test_resource_manager(self):
 
         self.assertTrue(isinstance(self.ResourcesManager.memory_limit_mb(), int))
 
@@ -337,7 +337,7 @@ class TasksTests(APITestCase):
         hash_docker = uuid.uuid4().hex
         compute_docker(client, self.ResourcesManager,
                        self.subtuple_path, 'test_compute_docker_' + hash_docker,
-                       'test_compute_docker_name_' + hash_docker, None, None)
+                       'test_compute_docker_name_' + hash_docker, None, None, environment={})
 
         self.assertIsNone(cpu_set)
         self.assertIsNone(gpu_set)
@@ -430,7 +430,7 @@ class TasksTests(APITestCase):
                 self.MEDIA_ROOT = MEDIA_ROOT
 
         subtuple_key = 'test_owkin'
-        subtuple = {'key': subtuple_key, 'inModels': None}
+        subtuple = {'key': subtuple_key, 'inModels': None, 'algo': {'hash': 'myhash'}}
         subtuple_directory = build_subtuple_folders(subtuple)
 
         with mock.patch('substrapp.tasks.tasks.settings') as msettings, \

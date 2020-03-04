@@ -27,6 +27,8 @@ MEDIA_ROOT = os.environ.get('MEDIA_ROOT', os.path.join(PROJECT_ROOT, f'medias/{O
 SITE_HOST = f'substra-backend.{ORG_NAME}.xyz'
 SITE_PORT = DEFAULT_PORT
 DEFAULT_DOMAIN = os.environ.get('DEFAULT_DOMAIN', f'http://{SITE_HOST}:{SITE_PORT}')
+
+CELERY_RESULT_BACKEND = 'django-db'
 CELERY_TASK_MAX_RETRIES = 1 # 1 retry == 2 attempts
 CELERY_TASK_RETRY_DELAY_SECONDS = 0
 
@@ -34,48 +36,49 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
-        },
         'simple': {
-            'format': '%(levelname)s - %(asctime)s - %(name)s - %(message)s'
+            'format': '%(levelname)s - %(asctime)s - %(name)s - %(message)s',
         },
-    },
-    'filters': {
-        'require_debug_false': {
-            '()': 'django.utils.log.RequireDebugFalse'
-        }
     },
     'handlers': {
-        'mail_admins': {
-            'level': 'ERROR',
-            'filters': ['require_debug_false'],
-            'class': 'django.utils.log.AdminEmailHandler'
-        },
         'console': {
-            'level': 'DEBUG',
             'class': 'logging.StreamHandler',
-            'formatter': 'simple'
+            'formatter': 'simple',
         },
-        'error_file': {
-            'level': 'INFO',
-            'filename': os.path.join(PROJECT_ROOT, 'backend.log'),
-            'class': 'logging.handlers.RotatingFileHandler',
-            'maxBytes': 1 * 1024 * 1024,
-            'backupCount': 2,
-            'formatter': 'verbose'
-        }
     },
     'loggers': {
-        'django.request': {
-            'handlers': ['mail_admins', 'error_file'],
+        # root logger
+        '': {
+            'level': 'WARNING',
+            'handlers': ['console'],
+            'propagate': True,
+        },
+        # django and its applications
+        'django': {
             'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        'substrapp': {
+            'level': 'DEBUG',
+            'handlers': ['console'],
             'propagate': False,
         },
         'events': {
-            'handlers': ['console'],
             'level': 'DEBUG',
-            'propagate': True,
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        # third-party libraries
+        'hfc': {
+            'level': 'WARNING',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        'celery': {
+            'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
         },
     }
 }

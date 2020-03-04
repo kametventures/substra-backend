@@ -37,6 +37,8 @@ SITE_HOST = os.environ.get('SITE_HOST', f'substra-backend.{ORG_NAME}.xyz')
 SITE_PORT = os.environ.get('SITE_PORT', DEFAULT_PORT)
 DEFAULT_DOMAIN = os.environ.get('DEFAULT_DOMAIN', f'http://{SITE_HOST}:{SITE_PORT}')
 
+CELERY_RESULT_BACKEND = 'django-db'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -46,12 +48,7 @@ LOGGING = {
     },
     'formatters': {
         'verbose': {
-            'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
-        },
-        'generic': {
-            'format': '%(asctime)s [%(process)d] [%(levelname)s] %(message)s',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
-            '()': 'logging.Formatter',
+            'format': '%(levelname)s %(asctime)s %(name)s %(process)d %(thread)d %(message)s'
         },
     },
     'handlers': {
@@ -61,36 +58,54 @@ LOGGING = {
             'tags': {'custom-tag': 'x'},
         },
         'console': {
-            'level': 'DEBUG',
+            'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'verbose'
         },
-        'error_file': {
-            'class': 'logging.FileHandler',
-            'formatter': 'generic',
-            'filename': '/var/log/substra-backend.error.log',
-        },
-        'access_file': {
-            'class': 'logging.FileHandler',
-            'formatter': 'generic',
-            'filename': '/var/log/substra-backend.access.log',
-        },
     },
     'loggers': {
-        'django': {
-            'level': 'INFO',
+        # root logger
+        '': {
+            'level': 'WARNING',
             'handlers': ['console'],
             'propagate': True,
         },
-        'raven': {
-            'level': 'DEBUG',
+        # django and its applications
+        'django': {
+            'level': 'INFO',
             'handlers': ['console'],
             'propagate': False,
         },
-        'sentry.errors': {
-            'level': 'DEBUG',
+        'substrapp': {
+            'level': 'INFO',
             'handlers': ['console'],
             'propagate': False,
-        }
+        },
+        'events': {
+            'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        # third-party libraries
+        'sentry.errors': {
+            'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        'raven': {
+            'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        'hfc': {
+            'level': 'WARNING',
+            'handlers': ['console'],
+            'propagate': False,
+        },
+        'celery': {
+            'level': 'INFO',
+            'handlers': ['console'],
+            'propagate': False,
+        },
     },
 }

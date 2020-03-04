@@ -1,5 +1,4 @@
 import tempfile
-import logging
 from django.conf import settings
 from django.http import Http404
 from django.urls import reverse
@@ -9,12 +8,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
-# from hfc.fabric import Client
-# cli = Client(net_profile="../network.json")
+from substrapp import ledger
 from substrapp.models import DataManager
 from substrapp.serializers import DataManagerSerializer, LedgerDataManagerSerializer
-from substrapp.serializers.ledger.datamanager.util import updateLedgerDataManager
-from substrapp.serializers.ledger.datamanager.tasks import updateLedgerDataManagerAsync
 from substrapp.utils import get_hash
 from substrapp.ledger_utils import query_ledger, get_object_from_ledger, LedgerError, LedgerTimeout, LedgerConflict
 from substrapp.views.utils import (PermissionMixin, find_primary_key_error,
@@ -54,7 +50,7 @@ class DataManagerViewSet(mixins.CreateModelMixin,
                 'authorized_ids': request.data.getlist('permissions_authorized_ids', []),
             },
             'type': request.data.get('type'),
-            'objective_keys': request.data.getlist('objective_keys'),
+            'objective_key': request.data.get('objective_key', ''),
         }
 
         # create on db
@@ -118,8 +114,6 @@ class DataManagerViewSet(mixins.CreateModelMixin,
             return Response({'message': e.data, 'pkhash': e.pkhash}, status=e.st)
         except LedgerException as e:
             return Response({'message': e.data}, status=e.st)
-        except Exception as e:
-            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         else:
             headers = self.get_success_headers(data)
             st = get_success_create_code()
@@ -190,8 +184,6 @@ class DataManagerViewSet(mixins.CreateModelMixin,
             data = self._retrieve(request, pk)
         except LedgerError as e:
             return Response({'message': str(e.msg)}, status=e.status)
-        except Exception as e:
-            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response(data, status=status.HTTP_200_OK)
 
@@ -215,11 +207,6 @@ class DataManagerViewSet(mixins.CreateModelMixin,
                     query_params=query_params)
             except LedgerError as e:
                 return Response({'message': str(e.msg)}, status=e.status)
-            except Exception as e:
-                logging.exception(e)
-                return Response(
-                    {'message': f'Malformed search filters {query_params}'},
-                    status=status.HTTP_400_BAD_REQUEST)
 
         for group in data_managers_list:
             for data_manager in group:
@@ -245,19 +232,14 @@ class DataManagerViewSet(mixins.CreateModelMixin,
         }
 
         if getattr(settings, 'LEDGER_SYNC_ENABLED'):
-            try:
-                data = updateLedgerDataManager(args, sync=True)
-            except LedgerError as e:
-                return Response({'message': str(e.msg)}, status=e.status)
             st = status.HTTP_200_OK
-
         else:
-            # use a celery task, as we are in an http request transaction
-            updateLedgerDataManagerAsync.delay(args)
-            data = {
-                'message': 'The substra network has been notified for updating this DataManager'
-            }
             st = status.HTTP_202_ACCEPTED
+
+        try:
+            data = ledger.update_datamanager(args)
+        except LedgerError as e:
+            return Response({'message': str(e.msg)}, status=e.status)
 
         return Response(data, status=st)
 
@@ -268,8 +250,12 @@ class DataManagerPermissionViewSet(PermissionMixin,
     serializer_class = DataManagerSerializer
     ledger_query_call = 'queryDataManager'
 
-    @action(detail=True)
-    def description(self, request, *args, **kwargs):
+    # actions cannot be named "description"
+    # https://github.com/encode/django-rest-framework/issues/6490
+    # for some of the restricted names see:
+    # https://www.django-rest-framework.org/api-guide/viewsets/#introspecting-viewset-actions
+    @action(detail=True, url_path='description', url_name='description')
+    def description_(self, request, *args, **kwargs):
         return self.download_file(request, 'description')
 
     @action(detail=True)

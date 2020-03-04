@@ -95,9 +95,15 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.RemoteUserMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'libs.SQLPrintingMiddleware.SQLPrintingMiddleware',
-    'libs.HealthCheckMiddleware.HealthCheckMiddleware',
+    'libs.health_check_middleware.HealthCheckMiddleware',
 ]
+
+
+DJANGO_LOG_SQL_QUERIES = to_bool(os.environ.get('DJANGO_LOG_SQL_QUERIES', 'True'))
+if DJANGO_LOG_SQL_QUERIES:
+    MIDDLEWARE.append(
+        'libs.sql_printing_middleware.SQLPrintingMiddleware'
+    )
 
 ROOT_URLCONF = 'backend.urls'
 
@@ -134,7 +140,7 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'libs.zxcvbnValidator.ZxcvbnValidator',
+        'NAME': 'libs.zxcvbn_validator.ZxcvbnValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -146,7 +152,7 @@ AUTH_PASSWORD_VALIDATORS = [
         }
     },
     {
-        'NAME': 'libs.maximumLengthValidator.MaximumLengthValidator',
+        'NAME': 'libs.maximum_length_validator.MaximumLengthValidator',
         'OPTIONS': {
             'max_length': 64
         }
@@ -186,9 +192,10 @@ TASK = {
     'CAPTURE_LOGS': to_bool(os.environ.get('TASK_CAPTURE_LOGS', True)),
     'CLEAN_EXECUTION_ENVIRONMENT': to_bool(os.environ.get('TASK_CLEAN_EXECUTION_ENVIRONMENT', True)),
     'CACHE_DOCKER_IMAGES': to_bool(os.environ.get('TASK_CACHE_DOCKER_IMAGES', False)),
+    'CHAINKEYS_ENABLED': to_bool(os.environ.get('TASK_CHAINKEYS_ENABLED', False)),
+    'LIST_WORKSPACE': to_bool(os.environ.get('TASK_LIST_WORKSPACE', True)),
 }
 
-CELERY_RESULT_BACKEND = 'django-db'
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TASK_SERIALIZER = 'json'
@@ -202,3 +209,4 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
 
 EXPIRY_TOKEN_LIFETIME = timedelta(minutes=int(os.environ.get('EXPIRY_TOKEN_LIFETIME', 24*60)))
 
+GZIP_MODELS = to_bool(os.environ.get('GZIP_MODELS', False))

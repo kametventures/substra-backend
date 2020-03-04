@@ -1,5 +1,3 @@
-import logging
-
 from rest_framework import mixins, status
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
@@ -57,8 +55,6 @@ class ComputePlanViewSet(mixins.CreateModelMixin,
             data = get_object_from_ledger(pk, 'queryComputePlan')
         except LedgerError as e:
             return Response({'message': str(e.msg)}, status=e.status)
-        except Exception as e:
-            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response(data, status=status.HTTP_200_OK)
 
@@ -79,11 +75,6 @@ class ComputePlanViewSet(mixins.CreateModelMixin,
                     query_params=query_params)
             except LedgerError as e:
                 return Response({'message': str(e.msg)}, status=e.status)
-            except Exception as e:
-                logging.exception(e)
-                return Response(
-                    {'message': f'Malformed search filters {query_params}'},
-                    status=status.HTTP_400_BAD_REQUEST)
 
         return Response(compute_plan_list, status=status.HTTP_200_OK)
 
@@ -96,3 +87,24 @@ class ComputePlanViewSet(mixins.CreateModelMixin,
         except LedgerError as e:
             return Response({'message': str(e.msg)}, status=e.status)
         return Response(compute_plan, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['POST'])
+    def update_ledger(self, request, pk):
+        validate_pk(pk)
+
+        compute_plan_id = pk
+
+        serializer = self.get_serializer(data=dict(request.data))
+        serializer.is_valid(raise_exception=True)
+
+        # update compute plan in ledger
+        try:
+            data = serializer.update(compute_plan_id, serializer.validated_data)
+        except LedgerError as e:
+            error = {'message': str(e.msg), 'computePlanID': compute_plan_id}
+            return Response(error, status=e.status)
+
+        # send successful response
+        headers = self.get_success_headers(data)
+        status = get_success_create_code()
+        return Response(data, status=status, headers=headers)

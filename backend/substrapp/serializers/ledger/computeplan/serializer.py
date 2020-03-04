@@ -1,10 +1,6 @@
 from rest_framework import serializers
 
-from django.conf import settings
-
-from .util import createLedgerComputePlan
-from .tasks import createLedgerComputePlanAsync
-
+from substrapp import ledger
 from substrapp.serializers.ledger.utils import PermissionsSerializer
 
 
@@ -64,6 +60,7 @@ class LedgerComputePlanSerializer(serializers.Serializer):
     testtuples = ComputePlanTesttupleSerializer(many=True, required=False)
     composite_traintuples = ComputePlanCompositeTrainTupleSerializer(many=True, required=False)
     aggregatetuples = ComputePlanAggregatetupleSerializer(many=True, required=False)
+    tag = serializers.CharField(min_length=0, max_length=64, allow_blank=True, required=False)
 
     def get_args(self, data):
         # convert snake case fields to camel case fields to match chaincode expected inputs
@@ -138,21 +135,16 @@ class LedgerComputePlanSerializer(serializers.Serializer):
             'traintuples': traintuples,
             'testtuples': testtuples,
             'compositeTraintuples': composite_traintuples,
-            'aggregatetuples': aggregatetuples
+            'aggregatetuples': aggregatetuples,
+            'tag': data.get('tag'),
         }
 
     def create(self, validated_data):
         args = self.get_args(validated_data)
+        return ledger.create_computeplan(args)
 
-        if getattr(settings, 'LEDGER_SYNC_ENABLED'):
-            data = createLedgerComputePlan(args, sync=True)
-        else:
-            # use a celery task, as we are in an http request transaction
-            createLedgerComputePlanAsync.delay(args)
-            data = {
-                'message': 'The substra network has been notified for adding this ComputePlan. '
-                           'Please be aware you won\'t get return values from the ledger. '
-                           'You will need to check manually'
-            }
-
-        return data
+    def update(self, compute_plan_id, validated_data):
+        args = self.get_args(validated_data)
+        del args['tag']
+        args['computePlanID'] = compute_plan_id
+        return ledger.update_computeplan(args)

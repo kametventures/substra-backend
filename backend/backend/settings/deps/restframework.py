@@ -10,8 +10,8 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'users.authentication.SecureJWTAuthentication',  # for front/sdk/cli
-        'libs.expiryTokenAuthentication.ExpiryTokenAuthentication',  # for front/sdk/cli
-        'libs.sessionAuthentication.CustomSessionAuthentication',  # for web browsable api
+        'libs.expiry_token_authentication.ExpiryTokenAuthentication',  # for front/sdk/cli
+        'libs.session_authentication.CustomSessionAuthentication',  # for web browsable api
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -20,9 +20,12 @@ REST_FRAMEWORK = {
     'DEFAULT_VERSIONING_CLASS': 'libs.versioning.AcceptHeaderVersioningRequired',
     'ALLOWED_VERSIONS': ('0.0',),
     'DEFAULT_VERSION': '0.0',
+    'EXCEPTION_HANDLER': 'substrapp.exceptions.api_exception_handler',
 }
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(os.environ.get('ACCESS_TOKEN_LIFETIME', 24*60))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=int(os.environ.get('REFRESH_TOKEN_LIFETIME', 24*60*7))),
+    'ROTATE_REFRESH_TOKENS': True,
     'AUTH_HEADER_TYPES': ('JWT',),
 }

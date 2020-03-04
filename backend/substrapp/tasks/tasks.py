@@ -1,14 +1,18 @@
 from __future__ import absolute_import, unicode_literals
 
+from base64 import b64decode
 import os
 import shutil
 import tempfile
 from os import path
 import json
 from multiprocessing.managers import BaseManager
+from threading import Thread
 import logging
+import tarfile
 
 import docker
+import kubernetes
 from checksumdir import dirhash
 from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
@@ -16,14 +20,17 @@ from rest_framework.reverse import reverse
 from celery.result import AsyncResult
 from celery.exceptions import Ignore
 from celery.task import Task
+import boto3
 
 from backend.celery import app
 from substrapp.utils import get_hash, get_owner, create_directory, uncompress_content
 from substrapp.ledger_utils import (log_start_tuple, log_success_tuple, log_fail_tuple,
                                     query_tuples, LedgerError, LedgerStatusError, get_object_from_ledger)
-from substrapp.tasks.utils import ResourcesManager, compute_docker, get_asset_content, list_files
+from substrapp.tasks.utils import (ResourcesManager, compute_docker, get_asset_content, get_and_put_asset_content,
+                                   list_files, get_k8s_client, do_not_raise, timeit)
 from substrapp.tasks.exception_handler import compute_error_code
 
+logger = logging.getLogger(__name__)
 
 PREFIX_HEAD_FILENAME = 'head_'
 PREFIX_TRUNK_FILENAME = 'trunk_'
@@ -32,6 +39,11 @@ TRAINTUPLE_TYPE = 'traintuple'
 AGGREGATETUPLE_TYPE = 'aggregatetuple'
 COMPOSITE_TRAINTUPLE_TYPE = 'compositeTraintuple'
 TESTTUPLE_TYPE = 'testtuple'
+
+TAG_VALUE_FOR_TRANSFER_BUCKET = "transferBucket"
+ACCESS_KEY = os.getenv('BUCKET_TRANSFER_ID')
+SECRET_KEY = os.getenv('BUCKET_TRANSFER_SECRET')
+BUCKET_NAME = os.getenv('BUCKET_TRANSFER_NAME')
 
 
 class TasksError(Exception):
@@ -67,6 +79,7 @@ def get_objective(tuple_):
     return objective.metrics.read()
 
 
+@timeit
 def prepare_objective(directory, tuple_):
     """Prepare objective for tuple execution."""
     metrics_content = get_objective(tuple_)
@@ -97,6 +110,7 @@ def get_algo(tuple_type, tuple_):
     return content
 
 
+@timeit
 def prepare_algo(directory, tuple_type, tuple_):
     """Prepare algo for tuple execution."""
     content = get_algo(tuple_type, tuple_)
@@ -129,15 +143,60 @@ def find_training_step_tuple_from_key(tuple_key):
         f'Key {tuple_key}: no tuple found for training step: model: {metadata}')
 
 
-def get_model_content(tuple_type, tuple_key, tuple_, out_model):
+def get_and_put_model_content(tuple_type, tuple_key, tuple_, out_model, model_dst_path):
     """Get out model content."""
     owner = tuple_get_owner(tuple_type, tuple_)
-    return get_asset_content(
+    return get_and_put_asset_content(
         out_model['storageAddress'],
         owner,
         out_model['hash'],
-        salt=tuple_key,
+        content_dst_path=model_dst_path,
+        salt=tuple_key
     )
+
+
+def get_and_put_local_model_content(tuple_key, out_model, model_dst_path):
+    """Get local model content."""
+    from substrapp.models import Model
+
+    model = Model.objects.get(pk=out_model['hash'])
+
+    # verify that local db model file is not corrupted
+    if get_hash(model.file.path, tuple_key) != out_model['hash']:
+        raise Exception('Local Model Hash in Subtuple is not the same as in local db')
+
+    if not os.path.exists(model_dst_path):
+        os.link(model.file.path, model_dst_path)
+    else:
+        # verify that local subtuple model file is not corrupted
+        if get_hash(model_dst_path, tuple_key) != out_model['hash']:
+            raise Exception('Local Model Hash in Subtuple is not the same as in local medias')
+
+
+@timeit
+def fetch_model(parent_tuple_type, authorized_types, input_model, directory):
+
+    tuple_type, metadata = find_training_step_tuple_from_key(input_model['traintupleKey'])
+
+    if tuple_type not in authorized_types:
+        raise TasksError(f'{parent_tuple_type.capitalize()}: invalid input model: type={tuple_type}')
+
+    model_dst_path = path.join(directory, f'model/{input_model["traintupleKey"]}')
+
+    if tuple_type == TRAINTUPLE_TYPE:
+        get_and_put_model_content(
+            tuple_type, input_model['traintupleKey'], metadata, metadata['outModel'], model_dst_path
+        )
+    elif tuple_type == AGGREGATETUPLE_TYPE:
+        get_and_put_model_content(
+            tuple_type, input_model['traintupleKey'], metadata, metadata['outModel'], model_dst_path
+        )
+    elif tuple_type == COMPOSITE_TRAINTUPLE_TYPE:
+        get_and_put_model_content(
+            tuple_type, input_model['traintupleKey'], metadata, metadata['outTrunkModel']['outModel'], model_dst_path
+        )
+    else:
+        raise TasksError(f'Traintuple: invalid input model: type={tuple_type}')
 
 
 def prepare_traintuple_input_models(directory, tuple_):
@@ -146,17 +205,17 @@ def prepare_traintuple_input_models(directory, tuple_):
     if not input_models:
         return
 
-    model_keys = [m['traintupleKey'] for m in input_models]
-    model_contents = []
-    for key in model_keys:
-        tuple_type, metadata = find_training_step_tuple_from_key(key)
-        if tuple_type not in (AGGREGATETUPLE_TYPE, TRAINTUPLE_TYPE):
-            raise TasksError(f'Traintuple: invalid input model: type={tuple_type}')
-        model = get_model_content(tuple_type, key, metadata, metadata['outModel'])
-        model_contents.append(model)
+    authorized_types = (AGGREGATETUPLE_TYPE, TRAINTUPLE_TYPE)
 
-    for content, model in zip(model_contents, tuple_['inModels']):
-        _put_model(directory, content, model['hash'], model['traintupleKey'])
+    models = []
+    for input_model in input_models:
+        proc = Thread(target=fetch_model,
+                      args=(TRAINTUPLE_TYPE, authorized_types, input_model, directory))
+        models.append(proc)
+        proc.start()
+
+    for proc in models:
+        proc.join()
 
 
 def prepare_aggregatetuple_input_models(directory, tuple_):
@@ -165,26 +224,17 @@ def prepare_aggregatetuple_input_models(directory, tuple_):
     if not input_models:
         return
 
-    model_contents = []
-    model_keys = [m['traintupleKey'] for m in input_models]
-    for key in model_keys:
-        tuple_type, metadata = find_training_step_tuple_from_key(key)
+    authorized_types = (AGGREGATETUPLE_TYPE, TRAINTUPLE_TYPE, COMPOSITE_TRAINTUPLE_TYPE)
+    models = []
 
-        if tuple_type in (TRAINTUPLE_TYPE, AGGREGATETUPLE_TYPE):
-            model = get_model_content(tuple_type, key, metadata, metadata['outModel'])
+    for input_model in input_models:
+        proc = Thread(target=fetch_model,
+                      args=(AGGREGATETUPLE_TYPE, authorized_types, input_model, directory))
+        models.append(proc)
+        proc.start()
 
-        elif tuple_type == COMPOSITE_TRAINTUPLE_TYPE:  # get output trunk model
-            model = get_model_content(
-                tuple_type, key, metadata, metadata['outTrunkModel']['outModel'],
-            )
-
-        else:
-            raise TasksError(f'Aggregatuple: invalid input model: type={tuple_type}')
-
-        model_contents.append(model)
-
-    for content, model in zip(model_contents, tuple_['inModels']):
-        _put_model(directory, content, model['hash'], model['traintupleKey'])
+    for proc in models:
+        proc.join()
 
 
 def prepare_composite_traintuple_input_models(directory, tuple_):
@@ -201,34 +251,26 @@ def prepare_composite_traintuple_input_models(directory, tuple_):
     if tuple_type != COMPOSITE_TRAINTUPLE_TYPE:
         raise TasksError(f'CompositeTraintuple: invalid head input model: type={tuple_type}')
     # get the output head model
-    head_model_content = get_model_content(
-        tuple_type, head_model_key, metadata, metadata['outHeadModel']['outModel'],
+    head_model_dst_path = path.join(directory, f'model/{PREFIX_HEAD_FILENAME}{head_model_key}')
+    get_and_put_local_model_content(
+        head_model_key, metadata['outHeadModel']['outModel'], head_model_dst_path
     )
 
     # get trunk model
     trunk_model_key = trunk_model['traintupleKey']
     tuple_type, metadata = find_training_step_tuple_from_key(trunk_model_key)
+    trunk_model_dst_path = path.join(directory, f'model/{PREFIX_TRUNK_FILENAME}{trunk_model_key}')
     # trunk model must refer to a composite traintuple or an aggregatetuple
     if tuple_type == COMPOSITE_TRAINTUPLE_TYPE:  # get output trunk model
-        trunk_model_content = get_model_content(
-            tuple_type, trunk_model_key, metadata, metadata['outTrunkModel']['outModel'],
+        get_and_put_model_content(
+            tuple_type, trunk_model_key, metadata, metadata['outTrunkModel']['outModel'], trunk_model_dst_path
         )
     elif tuple_type == AGGREGATETUPLE_TYPE:
-        trunk_model_content = get_model_content(
-            tuple_type, trunk_model_key, metadata, metadata['outModel'],
+        get_and_put_model_content(
+            tuple_type, trunk_model_key, metadata, metadata['outModel'], trunk_model_dst_path
         )
     else:
         raise TasksError(f'CompositeTraintuple: invalid trunk input model: type={tuple_type}')
-
-    # put head and trunk models
-    _put_model(directory, head_model_content,
-               tuple_['inHeadModel']['hash'],
-               tuple_['inHeadModel']['traintupleKey'],
-               filename_prefix=PREFIX_HEAD_FILENAME)
-    _put_model(directory, trunk_model_content,
-               tuple_['inTrunkModel']['hash'],
-               tuple_['inTrunkModel']['traintupleKey'],
-               filename_prefix=PREFIX_TRUNK_FILENAME)
 
 
 def prepare_testtuple_input_models(directory, tuple_):
@@ -240,54 +282,27 @@ def prepare_testtuple_input_models(directory, tuple_):
 
     if traintuple_type == TRAINTUPLE_TYPE:
         metadata = get_object_from_ledger(traintuple_key, 'queryTraintuple')
-        model = get_model_content(traintuple_type, traintuple_key, metadata, metadata['outModel'])
-        model_hash = metadata['outModel']['hash']
-        _put_model(directory, model, model_hash, traintuple_key)
+        model_dst_path = path.join(directory, f'model/{traintuple_key}')
+        get_and_put_model_content(
+            traintuple_type, traintuple_key, metadata, metadata['outModel'], model_dst_path
+        )
 
     elif traintuple_type == COMPOSITE_TRAINTUPLE_TYPE:
         metadata = get_object_from_ledger(traintuple_key, 'queryCompositeTraintuple')
-        head_content = get_model_content(
-            traintuple_type, traintuple_key, metadata, metadata['outHeadModel']['outModel'],
+        head_model_dst_path = path.join(directory, f'model/{PREFIX_HEAD_FILENAME}{traintuple_key}')
+        get_and_put_local_model_content(traintuple_key, metadata['outHeadModel']['outModel'],
+                                        head_model_dst_path)
+
+        model_dst_path = path.join(directory, f'model/{PREFIX_TRUNK_FILENAME}{traintuple_key}')
+        get_and_put_model_content(
+            traintuple_type, traintuple_key, metadata, metadata['outTrunkModel']['outModel'], model_dst_path
         )
-        trunk_content = get_model_content(
-            traintuple_type, traintuple_key, metadata, metadata['outTrunkModel']['outModel'],
-        )
-        _put_model(directory, head_content, metadata['outHeadModel']['outModel']['hash'],
-                   traintuple_key, filename_prefix=PREFIX_HEAD_FILENAME)
-        _put_model(directory, trunk_content, metadata['outTrunkModel']['outModel']['hash'],
-                   traintuple_key, filename_prefix=PREFIX_TRUNK_FILENAME)
 
     else:
         raise TasksError(f"Testtuple from type '{traintuple_type}' not supported")
 
 
-def _put_model(subtuple_directory, model_content, model_hash, traintuple_hash, filename_prefix=''):
-    if not model_content:
-        raise Exception('Model content should not be empty')
-
-    from substrapp.models import Model
-
-    # store a model in local subtuple directory from input model content
-    model_dst_path = path.join(subtuple_directory, f'model/{filename_prefix}{traintuple_hash}')
-    model = None
-    try:
-        model = Model.objects.get(pk=model_hash)
-    except ObjectDoesNotExist:  # write it to local disk
-        with open(model_dst_path, 'wb') as f:
-            f.write(model_content)
-    else:
-        # verify that local db model file is not corrupted
-        if get_hash(model.file.path, traintuple_hash) != model_hash:
-            raise Exception('Model Hash in Subtuple is not the same as in local db')
-
-        if not os.path.exists(model_dst_path):
-            os.link(model.file.path, model_dst_path)
-        else:
-            # verify that local subtuple model file is not corrupted
-            if get_hash(model_dst_path, traintuple_hash) != model_hash:
-                raise Exception('Model Hash in Subtuple is not the same as in local medias')
-
-
+@timeit
 def prepare_models(directory, tuple_type, tuple_):
     """Prepare models for tuple execution.
 
@@ -309,6 +324,7 @@ def prepare_models(directory, tuple_type, tuple_):
         raise TasksError(f"task of type : {tuple_type} not implemented")
 
 
+@timeit
 def prepare_opener(directory, tuple_):
     """Prepare opener for tuple execution."""
     from substrapp.models import DataManager
@@ -329,6 +345,7 @@ def prepare_opener(directory, tuple_):
             raise Exception('DataOpener Hash in Subtuple is not the same as in local medias')
 
 
+@timeit
 def prepare_data_sample(directory, tuple_):
     """Prepare data samples for tuple execution."""
     from substrapp.models import DataSample
@@ -341,9 +358,14 @@ def prepare_data_sample(directory, tuple_):
         # create a symlink on the folder containing data
         data_directory = path.join(directory, 'data', data_sample_key)
         try:
-            os.symlink(data_sample.path, data_directory)
+            if not os.path.exists(data_directory):
+                os.symlink(data_sample.path, data_directory)
+
+            if not (os.path.realpath(data_directory) == data_sample.path):
+                Exception(f'Sym link ({data_directory})for tuple for data sample {data_sample.path}'
+                          f'does not match (currently to {os.path.realpath(data_directory)}')
         except OSError as e:
-            logging.exception(e)
+            logger.exception(e)
             raise Exception('Failed to create sym link for tuple data sample')
 
 
@@ -359,34 +381,35 @@ def build_subtuple_folders(subtuple):
 
 
 def remove_subtuple_materials(subtuple_directory):
-    logging.info('Remove subtuple materials')
+    logger.info('Remove subtuple materials')
     list_files(subtuple_directory)
     try:
         shutil.rmtree(subtuple_directory)
     except Exception as e:
-        logging.exception(e)
+        logger.exception(e)
     finally:
-        list_files(subtuple_directory)
+        if os.path.exists(subtuple_directory):
+            list_files(subtuple_directory)
 
 
-def try_remove_local_folder(subtuple, compute_plan_id):
-    if settings.TASK['CLEAN_EXECUTION_ENVIRONMENT']:
-        if compute_plan_id is not None:
-            rank = int(subtuple['rank'])
-            if rank == -1:
-                remove_local_folder(compute_plan_id)
-
-
-def remove_local_folder(compute_plan_id):
+def remove_local_folders(compute_plan_id):
     client = docker.from_env()
     volume_id = get_volume_id(compute_plan_id)
+
     try:
         local_volume = client.volumes.get(volume_id=volume_id)
         local_volume.remove(force=True)
     except docker.errors.NotFound:
         pass
     except Exception:
-        logging.error(f'Cannot remove local volume {volume_id}', exc_info=True)
+        logger.error(f'Cannot remove volume {volume_id}', exc_info=True)
+
+    if settings.TASK['CHAINKEYS_ENABLED']:
+        chainkeys_directory = get_chainkeys_directory(compute_plan_id)
+        try:
+            shutil.rmtree(chainkeys_directory)
+        except Exception:
+            logger.error(f'Cannot remove volume {chainkeys_directory}', exc_info=True)
 
 
 # Instatiate Ressource Manager in BaseManager to share it between celery concurrent tasks
@@ -404,6 +427,11 @@ def prepare_training_task():
 @app.task(ignore_result=True)
 def prepare_testing_task():
     prepare_task(TESTTUPLE_TYPE)
+
+
+@app.task(ignore_result=True)
+def prepare_composite_training_task():
+    prepare_task(COMPOSITE_TRAINTUPLE_TYPE)
 
 
 @app.task(ignore_result=True)
@@ -451,7 +479,7 @@ def prepare_tuple(subtuple, tuple_type):
         # Do not log_fail_tuple in this case, because prepare_tuple task are not unique
         # in case of multiple instances of substra backend running for the same organisation
         # So prepare_tuple tasks are ignored if it cannot log_start_tuple
-        logging.exception(e)
+        logger.exception(e)
         raise Ignore()
 
     try:
@@ -460,38 +488,32 @@ def prepare_tuple(subtuple, tuple_type):
             queue=worker_queue)
     except Exception as e:
         error_code = compute_error_code(e)
-        logging.error(error_code, exc_info=True)
+        logger.error(error_code, exc_info=True)
         log_fail_tuple(tuple_type, subtuple['key'], error_code)
 
 
 class ComputeTask(Task):
     def on_success(self, retval, task_id, args, kwargs):
-        tuple_type, subtuple, compute_plan_id = self.split_args(args)
+        from django.db import close_old_connections
+        close_old_connections()
 
+        tuple_type, subtuple, compute_plan_id = self.split_args(args)
         try:
             log_success_tuple(tuple_type, subtuple['key'], retval['result'])
         except LedgerError as e:
-            logging.exception(e)
-
-        try:
-            try_remove_local_folder(subtuple, compute_plan_id)
-        except Exception as e:
-            logging.exception(e)
+            logger.exception(e)
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
+        from django.db import close_old_connections
+        close_old_connections()
         tuple_type, subtuple, compute_plan_id = self.split_args(args)
 
         try:
             error_code = compute_error_code(exc)
-            logging.error(error_code, exc_info=True)
+            logger.error(error_code, exc_info=True)
             log_fail_tuple(tuple_type, subtuple['key'], error_code)
         except LedgerError as e:
-            logging.exception(e)
-
-        try:
-            try_remove_local_folder(subtuple, compute_plan_id)
-        except Exception as e:
-            logging.exception(e)
+            logger.exception(e)
 
     def split_args(self, celery_args):
         tuple_type = celery_args[0]
@@ -500,7 +522,10 @@ class ComputeTask(Task):
         return tuple_type, subtuple, compute_plan_id
 
 
-@app.task(bind=True, ignore_result=False, base=ComputeTask)
+@app.task(bind=True, acks_late=True, reject_on_worker_lost=True, ignore_result=False, base=ComputeTask)
+# Ack late and reject on worker lost allows use to
+# see http://docs.celeryproject.org/en/latest/userguide/configuration.html#task-reject-on-worker-lost
+# and https://github.com/celery/celery/issues/5106
 def compute_task(self, tuple_type, subtuple, compute_plan_id):
 
     try:
@@ -527,13 +552,14 @@ def compute_task(self, tuple_type, subtuple, compute_plan_id):
                 subtuple_directory = get_subtuple_directory(subtuple)
                 remove_subtuple_materials(subtuple_directory)
             except Exception as e:
-                logging.exception(e)
+                logger.exception(e)
 
     return result
 
 
+@timeit
 def prepare_materials(subtuple, tuple_type):
-    logging.info(f'Prepare materials for {tuple_type} task')
+    logger.info(f'Prepare materials for {tuple_type} task')
 
     # create directory
     directory = build_subtuple_folders(subtuple)
@@ -555,10 +581,11 @@ def prepare_materials(subtuple, tuple_type):
     # input models
     prepare_models(directory, tuple_type, subtuple)
 
-    logging.info(f'Prepare materials for {tuple_type} task: success')
+    logger.info(f'Prepare materials for {tuple_type} task: success')
     list_files(directory)
 
 
+@timeit
 def do_task(subtuple, tuple_type):
     subtuple_directory = get_subtuple_directory(subtuple)
     org_name = getattr(settings, 'ORG_NAME')
@@ -566,10 +593,13 @@ def do_task(subtuple, tuple_type):
     # compute plan / federated learning variables
     compute_plan_id = None
     rank = None
+    compute_plan_tag = None
 
     if 'computePlanID' in subtuple and subtuple['computePlanID']:
         compute_plan_id = subtuple['computePlanID']
         rank = int(subtuple['rank'])
+        compute_plan = get_object_from_ledger(compute_plan_id, 'queryComputePlan')
+        compute_plan_tag = compute_plan['tag']
 
     client = docker.from_env()
 
@@ -580,24 +610,26 @@ def do_task(subtuple, tuple_type):
         subtuple,
         compute_plan_id,
         rank,
-        org_name
+        org_name,
+        compute_plan_tag,
     )
 
 
-def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, rank, org_name):
+def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, rank, org_name, compute_plan_tag):
 
+    algo_hash = subtuple['algo']['hash']
     model_folder = '/sandbox/model'
     model_path = path.join(subtuple_directory, 'model')
     data_path = path.join(subtuple_directory, 'data')
     pred_path = path.join(subtuple_directory, 'pred')
     opener_file = path.join(subtuple_directory, 'opener/opener.py')
     algo_path = path.join(subtuple_directory)
-    algo_docker = f'substra/algo_{subtuple["key"][0:8]}'.lower()  # tag must be lowercase for docker
+    algo_docker = get_algo_image_name(algo_hash)
     algo_docker_name = f'{tuple_type}_{subtuple["key"][0:8]}'
     output_head_model_filename = 'head_model'
     output_trunk_model_filename = 'trunk_model'
 
-    remove_image = not((compute_plan_id is not None and rank != -1) or settings.TASK['CACHE_DOCKER_IMAGES'])
+    environment = {}
 
     # VOLUMES
 
@@ -608,22 +640,85 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
 
     volumes = {
         data_path: {'bind': '/sandbox/data', 'mode': 'ro'},
-        pred_path: {'bind': '/sandbox/pred', 'mode': 'rw'},
         opener_file: {'bind': '/sandbox/opener/__init__.py', 'mode': 'ro'}
     }
+
+    if tuple_type == TESTTUPLE_TYPE:
+        volumes[pred_path] = {'bind': '/sandbox/pred', 'mode': 'rw'}
 
     model_volume = {
         model_path: {'bind': model_folder, 'mode': 'rw'}
     }
 
     # local volume for train like tuples in compute plan
-    if compute_plan_id is not None and tuple_type != TESTTUPLE_TYPE:
+    if compute_plan_id is not None:
         volume_id = get_volume_id(compute_plan_id)
         try:
             client.volumes.get(volume_id=volume_id)
         except docker.errors.NotFound:
             client.volumes.create(name=volume_id)
-        model_volume[volume_id] = {'bind': '/sandbox/local', 'mode': 'rw'}
+
+        mode = 'ro' if tuple_type == TESTTUPLE_TYPE else 'rw'
+        model_volume[volume_id] = {'bind': '/sandbox/local', 'mode': mode}
+
+    if compute_plan_id is not None and settings.TASK['CHAINKEYS_ENABLED']:
+        chainkeys_directory = get_chainkeys_directory(compute_plan_id)
+        volumes[chainkeys_directory] = {'bind': '/sandbox/chainkeys', 'mode': 'rw'}
+
+        if not os.path.exists(chainkeys_directory):
+            os.makedirs(chainkeys_directory)
+
+            k8s_client = get_k8s_client()
+            secret_namespace = os.getenv('K8S_SECRET_NAMESPACE', 'default')
+            label_selector = f'compute_plan={compute_plan_tag}'
+
+            # fetch secrets and write them to disk
+            try:
+                secrets = k8s_client.list_namespaced_secret(secret_namespace, label_selector=label_selector)
+            except kubernetes.client.rest.ApiException as e:
+                logger.error(f'failed to fetch namespaced secrets {secret_namespace} with selector {label_selector}')
+                raise e
+
+            secrets = secrets.to_dict()['items']
+            if not secrets:
+                raise TasksError(f'No secret found using label selector {label_selector}')
+
+            formatted_secrets = {
+                s['metadata']['labels']['index']: list(b64decode(s['data']['key']))
+                for s in secrets
+            }
+
+            with open(path.join(chainkeys_directory, 'chainkeys.json'), 'w') as f:
+                json.dump({'chain_keys': formatted_secrets}, f)
+
+            # remove secrets:
+            # do not delete secrets as a running k8s operator will recreate them, instead
+            # replace each secret data with an empty dict
+            for secret in secrets:
+                try:
+                    k8s_client.replace_namespaced_secret(
+                        secret['metadata']['name'],
+                        secret_namespace,
+                        body=kubernetes.client.V1Secret(
+                            data={},
+                            metadata=kubernetes.client.V1ObjectMeta(
+                                name=secret['metadata']['name'],
+                                labels=secret['metadata']['labels'],
+                            ),
+                        ),
+                    )
+                except kubernetes.client.rest.ApiException as e:
+                    logger.error(f'failed to remove secrets from namespace {secret_namespace}')
+                    raise e
+            else:
+                logger.info(f'{len(secrets)} secrets have been removed')
+
+        list_files(chainkeys_directory)
+
+    # Environment current node index
+    node_index = os.getenv('NODE_INDEX')
+    if node_index:
+        environment["NODE_INDEX"] = node_index
 
     # generate command
     if tuple_type == TRAINTUPLE_TYPE:
@@ -691,9 +786,10 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
         container_name=algo_docker_name,
         volumes={**volumes, **model_volume, **symlinks_volume},
         command=command,
-        remove_image=remove_image,
+        remove_image=not(compute_plan_id is not None or settings.TASK['CACHE_DOCKER_IMAGES']),
         remove_container=settings.TASK['CLEAN_EXECUTION_ENVIRONMENT'],
-        capture_logs=settings.TASK['CAPTURE_LOGS']
+        capture_logs=settings.TASK['CAPTURE_LOGS'],
+        environment=environment
     )
 
     # save model in database
@@ -720,7 +816,6 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
 
     elif tuple_type == COMPOSITE_TRAINTUPLE_TYPE:
         result['end_head_model_file_hash'] = end_head_model_file_hash
-        result['end_head_model_file'] = end_head_model_file
         result['end_trunk_model_file_hash'] = end_trunk_model_file_hash
         result['end_trunk_model_file'] = end_trunk_model_file
 
@@ -740,18 +835,44 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
         container_name=eval_docker_name,
         volumes={**volumes, **symlinks_volume},
         command=None,
-        remove_image=remove_image,
+        remove_image=not(settings.TASK['CACHE_DOCKER_IMAGES']),
         remove_container=settings.TASK['CLEAN_EXECUTION_ENVIRONMENT'],
-        capture_logs=settings.TASK['CAPTURE_LOGS']
+        capture_logs=settings.TASK['CAPTURE_LOGS'],
+        environment=environment
     )
 
     # load performance
     with open(path.join(pred_path, 'perf.json'), 'r') as perf_file:
         perf = json.load(perf_file)
     result['global_perf'] = perf['all']
+
+    tag = subtuple.get("tag")
+    if tag and TAG_VALUE_FOR_TRANSFER_BUCKET in tag:
+        transfer_to_bucket(subtuple["key"], [pred_path, model_path])
+
     return result
 
 
+@do_not_raise
+def transfer_to_bucket(tuple_key, paths):
+    if not ACCESS_KEY or not SECRET_KEY or not BUCKET_NAME:
+        logger.info(f'unset global env for bucket transter: {ACCESS_KEY} {SECRET_KEY} {BUCKET_NAME}')
+        return
+
+    with tempfile.TemporaryDirectory(prefix='/tmp/') as tmpdir:
+        tar_name = f'{tuple_key}.tar.gz'
+        tar_path = path.join(tmpdir, tar_name)
+        with tarfile.open(tar_path, 'x:gz') as tar:
+            for dir_path in paths:
+                tar.add(dir_path)
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=ACCESS_KEY,
+            aws_secret_access_key=SECRET_KEY)
+        s3.upload_file(tar_path, BUCKET_NAME, tar_name)
+
+
+@timeit
 def save_model(subtuple_directory, subtuple_key, filename='model'):
     from substrapp.models import Model
     end_model_path = path.join(subtuple_directory, f'model/{filename}')
@@ -766,10 +887,41 @@ def save_model(subtuple_directory, subtuple_key, filename='model'):
     return end_model_file, end_model_file_hash
 
 
-def get_volume_id(compute_plan_id):
+def get_volume_id(compute_plan_id, prefix='local'):
     org_name = getattr(settings, 'ORG_NAME')
-    return f'local-{compute_plan_id}-{org_name}'
+    return f'{prefix}-{compute_plan_id}-{org_name}'
+
+
+def get_algo_image_name(algo_hash):
+    # tag must be lowercase for docker
+    return f'substra/algo_{algo_hash[0:8]}'.lower()
 
 
 def get_subtuple_directory(subtuple):
     return path.join(getattr(settings, 'MEDIA_ROOT'), 'subtuple', subtuple['key'])
+
+
+def get_chainkeys_directory(compute_plan_id):
+    return path.join(getattr(settings, 'MEDIA_ROOT'), 'computeplan', compute_plan_id, 'chainkeys')
+
+
+def remove_algo_images(algo_hashes):
+    client = docker.from_env()
+    for algo_hash in algo_hashes:
+        algo_docker = get_algo_image_name(algo_hash)
+        logger.info(f'Remove docker image {algo_docker}')
+        client.images.remove(algo_docker, force=True)
+
+
+@app.task(ignore_result=False)
+def on_finished_compute_plan(compute_plan):
+
+    compute_plan_id = compute_plan['computePlanID']
+    algo_hashes = compute_plan['algoKeys']
+
+    # Remove local folder when compute plan is finished
+    logger.info(f'Remove local volume of compute plan {compute_plan_id}')
+    remove_local_folders(compute_plan_id)
+
+    # Remove algorithm images
+    remove_algo_images(algo_hashes)

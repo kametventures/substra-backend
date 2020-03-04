@@ -17,14 +17,12 @@ from hfc.fabric.block_decoder import decode_fabric_MSP_config, decode_fabric_pee
 SUBSTRA_FOLDER = os.getenv('SUBSTRA_PATH', '/substra')
 LEDGER_CONFIG_FILE = os.environ.get('LEDGER_CONFIG_FILE', f'{SUBSTRA_FOLDER}/conf/{ORG}/substra-backend/conf.json')
 LEDGER = json.load(open(LEDGER_CONFIG_FILE, 'r'))
-
 LEDGER_SYNC_ENABLED = True
 LEDGER_CALL_RETRY = True
-
 LEDGER_MAX_RETRY_TIMEOUT = 5
-
-PEER_PORT = LEDGER['peer']['port'][os.environ.get('BACKEND_PEER_PORT', 'external')]
-
+LEDGER_WAIT_FOR_EVENT_TIMEOUT = int(os.getenv('LEDGER_WAIT_FOR_EVENT_TIMEOUT', '45'))
+LEDGER_INVOKE_STRATEGY = os.getenv('LEDGER_INVOKE_STRATEGY', 'ALL').upper() # possible values SELF / ALL
+LEDGER_QUERY_STRATEGY = os.getenv('LEDGER_QUERY_STRATEGY', 'SELF').upper() # possible values SELF / ALL
 LEDGER['requestor'] = create_user(
     name=LEDGER['client']['name'],
     org=LEDGER['client']['org'],
@@ -33,6 +31,7 @@ LEDGER['requestor'] = create_user(
     key_path=glob.glob(LEDGER['client']['key_path'])[0],
     cert_path=LEDGER['client']['cert_path']
 )
+PEER_PORT = LEDGER['peer']['port'][os.environ.get('BACKEND_PEER_PORT', 'external')]
 
 
 def get_hfc_client():
@@ -142,8 +141,9 @@ def update_client_with_discovery(client, discovery_results):
                 peer.init_with_bundle({
                     'url': url,
                     'grpcOptions': {
-                        'grpc-max-send-message-length': 15,
-                        'grpc.ssl_target_name_override': peer_info['endpoint'].split(':')[0]
+                        'grpc.ssl_target_name_override': peer_info['endpoint'].split(':')[0],
+                        'grpc.max_send_message_length': -1,
+                        'grpc.max_receive_message_length': -1
                     },
                     'tlsCACerts': {'path': tls_root_cert.name},
                     'clientKey': {'path': LEDGER['peer']['clientKey']},  # use peer creds (mutual tls)
@@ -165,8 +165,9 @@ def update_client_with_discovery(client, discovery_results):
         orderer.init_with_bundle({
             'url': f"{orderer_info[0]['host']}:{orderer_info[0]['port']}",
             'grpcOptions': {
-                'grpc-max-send-message-length': 15,
-                'grpc.ssl_target_name_override': orderer_info[0]['host']
+                'grpc.ssl_target_name_override': orderer_info[0]['host'],
+                'grpc.max_send_message_length': -1,
+                'grpc.max_receive_message_length': -1
             },
             'tlsCACerts': {'path': tls_root_cert.name},
             'clientKey': {'path': LEDGER['peer']['clientKey']},  # use peer creds (mutual tls)

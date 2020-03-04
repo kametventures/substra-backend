@@ -1,7 +1,9 @@
-import os
 import tempfile
 import logging
 from django.http import Http404
+from functools import wraps
+from django.conf import settings
+from django.middleware.gzip import GZipMiddleware
 from rest_framework import status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,8 +13,10 @@ from node.authentication import NodeUser
 from substrapp.models import Model
 from substrapp.serializers import ModelSerializer
 from substrapp.ledger_utils import query_ledger, get_object_from_ledger, LedgerError
-from substrapp.views.utils import CustomFileResponse, validate_pk, get_remote_asset, PermissionMixin
+from substrapp.views.utils import validate_pk, get_remote_asset, PermissionMixin
 from substrapp.views.filters_utils import filter_list
+
+logger = logging.getLogger(__name__)
 
 
 class ModelViewSet(mixins.RetrieveModelMixin,
@@ -74,10 +78,10 @@ class ModelViewSet(mixins.RetrieveModelMixin,
         try:
             data = self._retrieve(pk)
         except LedgerError as e:
-            logging.exception(e)
+            logger.exception(e)
             return Response({'message': str(e.msg)}, status=e.status)
         except Exception as e:
-            logging.exception(e)
+            logger.exception(e)
             return Response({'message': str(e)}, status.HTTP_400_BAD_REQUEST)
         else:
             return Response(data, status=status.HTTP_200_OK)
@@ -99,11 +103,6 @@ class ModelViewSet(mixins.RetrieveModelMixin,
                     query_params=query_params)
             except LedgerError as e:
                 return Response({'message': str(e.msg)}, status=e.status)
-            except Exception as e:
-                logging.exception(e)
-                return Response(
-                    {'message': f'Malformed search filters {query_params}'},
-                    status=status.HTTP_400_BAD_REQUEST)
 
         return Response(models_list, status=status.HTTP_200_OK)
 
@@ -120,20 +119,41 @@ class ModelViewSet(mixins.RetrieveModelMixin,
         return Response(data, status=status.HTTP_200_OK)
 
 
+def gzip_action(func):
+    gz = GZipMiddleware()
+
+    @wraps(func)
+    def wrapper(self, request, *args, **kwargs):
+        resp = func(self, request, *args, **kwargs)
+        return gz.process_response(request, resp)
+
+    if getattr(settings, 'GZIP_MODELS'):
+        return wrapper
+    return func
+
+
 class ModelPermissionViewSet(PermissionMixin,
                              GenericViewSet):
 
     queryset = Model.objects.all()
     serializer_class = ModelSerializer
-    ledger_query_call = 'queryModelDetails'
+    ledger_query_call = 'queryModelPermissions'
 
-    @action(detail=True)
-    def file(self, request, *args, **kwargs):
+    def has_access(self, user, asset):
+        """Returns true if API consumer can access asset data."""
+        if user.is_anonymous:  # safeguard, should never happened
+            return False
 
         # user cannot download model, only node can
-        if not isinstance(request.user, NodeUser):
-            return Response({}, status=status.HTTP_403_FORBIDDEN)
+        if not (type(user) is NodeUser):
+            return False
 
-        model_object = self.get_object()
-        data = getattr(model_object, 'file')
-        return CustomFileResponse(open(data.path, 'rb'), as_attachment=True, filename=os.path.basename(data.path))
+        permissions = asset['process']
+        node_id = user.username
+
+        return permissions['public'] or node_id in permissions['authorizedIDs']
+
+    @gzip_action
+    @action(detail=True)
+    def file(self, request, *args, **kwargs):
+        return self.download_local_file(request, django_field='file')

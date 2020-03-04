@@ -57,6 +57,11 @@ spec:
               value: {{ .Values.persistence.hostPath }}/medias/
             - name: PYTHONUNBUFFERED
               value: "1"
+            - name: "CELERYWORKER_IMAGE"
+              value: "{{ .Values.celeryworker.image.repository }}:{{ .Values.celeryworker.image.tag }}"
+          {{- with .Values.extraEnv }}
+{{ toYaml . | indent 12 }}
+          {{- end }}
           volumeMounts:
             - name: dockersocket
               mountPath: /var/run/docker.sock

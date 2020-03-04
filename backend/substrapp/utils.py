@@ -17,6 +17,8 @@ from checksumdir import dirhash
 from django.conf import settings
 from rest_framework import status
 
+logger = logging.getLogger(__name__)
+
 
 class JsonException(Exception):
     def __init__(self, msg):
@@ -31,7 +33,7 @@ def get_dir_hash(archive_object):
             archive_object.seek(0)
             uncompress_content(content, temp_dir)
         except Exception as e:
-            logging.error(e)
+            logger.error(e)
             raise e
         else:
             return dirhash(temp_dir, 'sha256')
@@ -43,7 +45,7 @@ def store_datasamples_archive(archive_object):
         content = archive_object.read()
         archive_object.seek(0)
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise e
 
     # Temporary directory for uncompress
@@ -54,7 +56,7 @@ def store_datasamples_archive(archive_object):
         uncompress_content(content, tmp_datasamples_path)
     except Exception as e:
         shutil.rmtree(tmp_datasamples_path, ignore_errors=True)
-        logging.error(e)
+        logger.error(e)
         raise e
     else:
         # return the directory hash of the uncompressed file and the path of
@@ -156,7 +158,7 @@ class NodeError(Exception):
     pass
 
 
-def get_remote_file(url, auth, **kwargs):
+def get_remote_file(url, auth, content_dst_path=None, **kwargs):
     kwargs.update({
         'headers': {'Accept': 'application/json;version=0.0'},
         'auth': auth
@@ -166,7 +168,13 @@ def get_remote_file(url, auth, **kwargs):
         kwargs['verify'] = False
 
     try:
-        response = requests.get(url, **kwargs)
+        if kwargs.get('stream', False) and content_dst_path is not None:
+            chunk_size = 1024 * 1024
+            with open(content_dst_path, 'wb') as fp:
+                response = requests.get(url, **kwargs)
+                fp.writelines(response.iter_content(chunk_size))
+        else:
+            response = requests.get(url, **kwargs)
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
         raise NodeError(f'Failed to fetch {url}') from e
 
@@ -174,13 +182,27 @@ def get_remote_file(url, auth, **kwargs):
 
 
 def get_remote_file_content(url, auth, content_hash, salt=None):
+
     response = get_remote_file(url, auth)
 
     if response.status_code != status.HTTP_200_OK:
-        logging.error(response.text)
+        logger.error(response.text)
         raise NodeError(f'Url: {url} returned status code: {response.status_code}')
 
     computed_hash = compute_hash(response.content, key=salt)
     if computed_hash != content_hash:
         raise NodeError(f"url {url}: hash doesn't match {content_hash} vs {computed_hash}")
     return response.content
+
+
+def get_and_put_remote_file_content(url, auth, content_hash, content_dst_path, salt=None):
+
+    response = get_remote_file(url, auth, content_dst_path, stream=True)
+
+    if response.status_code != status.HTTP_200_OK:
+        logger.error(response.text)
+        raise NodeError(f'Url: {url} returned status code: {response.status_code}')
+
+    computed_hash = get_hash(content_dst_path, key=salt)
+    if computed_hash != content_hash:
+        raise NodeError(f"url {url}: hash doesn't match {content_hash} vs {computed_hash}")

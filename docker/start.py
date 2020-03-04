@@ -100,6 +100,7 @@ def generate_docker_compose_file(conf, launch_settings):
                 'environment': [
                     'PYTHONUNBUFFERED=1',
                     f'CELERY_BROKER_URL={CELERY_BROKER_URL}',
+                    f'SCHEDULE_TASK_PERIOD={3 * 3600}',
                     f'DJANGO_SETTINGS_MODULE=backend.settings.common'],
                 'depends_on': ['rabbit']
             },
@@ -144,14 +145,10 @@ def generate_docker_compose_file(conf, launch_settings):
         cpu_count = os.cpu_count()
         processes = 2 * int(cpu_count) + 1
 
-        if launch_settings == 'prod':
-            django_server = f'python3 manage.py collectstatic --noinput; '\
-                            f'uwsgi --module backend.wsgi --static-map /static=/usr/src/app/backend/statics ' \
-                            f'--master --processes {processes} --threads 2 --need-app' \
-                            f'--env DJANGO_SETTINGS_MODULE=backend.settings.server.prod --http :{port} '
-        else:
-            django_server = f'DJANGO_SETTINGS_MODULE=backend.settings.server.dev ' \
-                            f'python3 manage.py runserver --noreload 0.0.0.0:{port}'
+        django_server = f'DJANGO_SETTINGS_MODULE=backend.settings.prod python3 manage.py collectstatic --noinput; '\
+                        f'uwsgi --module backend.wsgi --static-map /static=/usr/src/app/backend/statics ' \
+                        f'--master --processes {processes} --threads 2 --need-app ' \
+                        f'--env DJANGO_SETTINGS_MODULE=backend.settings.server.{launch_settings} --http :{port}'
 
         global_env = [
             f'BACKEND_ORG={org_name}',
@@ -166,6 +163,7 @@ def generate_docker_compose_file(conf, launch_settings):
             f"TASK_CAPTURE_LOGS=True",
             f"TASK_CLEAN_EXECUTION_ENVIRONMENT=True",
             f"TASK_CACHE_DOCKER_IMAGES=False",
+            f"TASK_CHAINKEYS_ENABLED=False",
 
             f'CELERY_BROKER_URL={CELERY_BROKER_URL}',
         ]
@@ -194,8 +192,9 @@ def generate_docker_compose_file(conf, launch_settings):
         if launch_settings == 'dev':
             fixtures_command = f"python manage.py init_nodes ./node/nodes/{org_name}MSP.json"
             # $ replace is needed for docker-compose $ special variable
-            user_command = f"python manage.py add_user {credentials['username']} "\
-                           f"'{credentials['password'].replace('$', '$$')}'"
+
+            password = credentials['password'].replace('$', '$$')
+            user_command = f"python manage.py add_user {credentials['username']} '{password}'"
 
         backend = {
             'container_name': f'substra-backend.{org_name_stripped}.xyz',
