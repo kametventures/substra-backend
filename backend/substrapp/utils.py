@@ -26,7 +26,13 @@ class JsonException(Exception):
         super(JsonException, self).__init__()
 
 
-def get_dir_hash(archive_object):
+def get_dir_hash(dir):
+    if not os.listdir(dir):
+        raise Exception(f"Cannot compute hash of folder {dir}: folder is empty.")
+    return dirhash(dir, 'sha256')
+
+
+def get_archive_hash(archive_object):
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             content = archive_object.read()
@@ -36,7 +42,7 @@ def get_dir_hash(archive_object):
             logger.error(e)
             raise e
         else:
-            return dirhash(temp_dir, 'sha256')
+            return get_dir_hash(temp_dir)
 
 
 def store_datasamples_archive(archive_object):
@@ -61,27 +67,27 @@ def store_datasamples_archive(archive_object):
     else:
         # return the directory hash of the uncompressed file and the path of
         # the temporary directory. The removal should be handled externally.
-        return dirhash(tmp_datasamples_path, 'sha256'), tmp_datasamples_path
+        return get_dir_hash(tmp_datasamples_path), tmp_datasamples_path
 
 
 def get_hash(file, key=None):
     if file is None:
-        return ''
-    else:
-        if isinstance(file, (str, bytes, os.PathLike)):
-            if isfile(file):
-                with open(file, 'rb') as f:
-                    data = f.read()
-            elif isdir(file):
-                return dirhash(file, 'sha256')
-            else:
-                return ''
-        else:
-            openedfile = file.open()
-            data = openedfile.read()
-            openedfile.seek(0)
+        raise Exception(f"Can't get hash of file {file}: file is 'None'")
 
-        return compute_hash(data, key)
+    if isinstance(file, (str, bytes, os.PathLike)):
+        if isfile(file):
+            with open(file, 'rb') as f:
+                data = f.read()
+        elif isdir(file):
+            return get_dir_hash(file)
+        else:
+            return ''
+    else:
+        openedfile = file.open()
+        data = openedfile.read()
+        openedfile.seek(0)
+
+    return compute_hash(data, key)
 
 
 def get_owner():
@@ -108,6 +114,27 @@ def create_directory(directory):
         os.makedirs(directory)
 
 
+def raise_if_path_traversal(requested_paths, to_directory):
+    # Inspired from https://stackoverflow.com/a/45188896
+
+    # Get real path and ensure there is a suffix /
+    # at the end of the path
+    safe_directory = os.path.join(
+        os.path.realpath(to_directory),
+        ''
+    )
+
+    if not isinstance(requested_paths, list):
+        raise TypeError(f'requested_paths argument should be a list not a {type(requested_paths)}')
+
+    for requested_path in requested_paths:
+        real_requested_path = os.path.realpath(requested_path)
+        is_traversal = os.path.commonprefix([real_requested_path, safe_directory]) != safe_directory
+
+        if is_traversal:
+            raise Exception(f'Path Traversal Error : {requested_path} (real : {real_requested_path}) is not safe.')
+
+
 class ZipFile(zipfile.ZipFile):
     """Override Zipfile to ensure unix file permissions are preserved.
 
@@ -132,11 +159,26 @@ class ZipFile(zipfile.ZipFile):
 
 
 def uncompress_path(archive_path, to_directory):
+
     if zipfile.is_zipfile(archive_path):
+
         with ZipFile(archive_path, 'r') as zf:
+
+            # Check no path traversal
+            filenames = [os.path.join(to_directory, filename)
+                         for filename in zf.namelist()]
+            raise_if_path_traversal(filenames, to_directory)
+
             zf.extractall(to_directory)
+
     elif tarfile.is_tarfile(archive_path):
         with tarfile.open(archive_path, 'r:*') as tf:
+
+            # Check no path traversal
+            filenames = [os.path.join(to_directory, filename)
+                         for filename in tf.getnames()]
+            raise_if_path_traversal(filenames, to_directory)
+
             tf.extractall(to_directory)
     else:
         raise Exception('Archive must be zip or tar.gz')
@@ -145,10 +187,22 @@ def uncompress_path(archive_path, to_directory):
 def uncompress_content(archive_content, to_directory):
     if zipfile.is_zipfile(io.BytesIO(archive_content)):
         with ZipFile(io.BytesIO(archive_content)) as zf:
+
+            # Check no path traversal
+            filenames = [os.path.join(to_directory, filename)
+                         for filename in zf.namelist()]
+            raise_if_path_traversal(filenames, to_directory)
+
             zf.extractall(to_directory)
     else:
         try:
             with tarfile.open(fileobj=io.BytesIO(archive_content)) as tf:
+
+                # Check no path traversal
+                filenames = [os.path.join(to_directory, filename)
+                             for filename in tf.getnames()]
+                raise_if_path_traversal(filenames, to_directory)
+
                 tf.extractall(to_directory)
         except tarfile.TarError:
             raise Exception('Archive must be zip or tar.*')
@@ -159,6 +213,7 @@ class NodeError(Exception):
 
 
 def get_remote_file(url, auth, content_dst_path=None, **kwargs):
+
     kwargs.update({
         'headers': {'Accept': 'application/json;version=0.0'},
         'auth': auth
@@ -170,9 +225,12 @@ def get_remote_file(url, auth, content_dst_path=None, **kwargs):
     try:
         if kwargs.get('stream', False) and content_dst_path is not None:
             chunk_size = 1024 * 1024
-            with open(content_dst_path, 'wb') as fp:
-                response = requests.get(url, **kwargs)
-                fp.writelines(response.iter_content(chunk_size))
+
+            with requests.get(url, **kwargs) as response:
+                response.raise_for_status()
+
+                with open(content_dst_path, 'wb') as fp:
+                    fp.writelines(response.iter_content(chunk_size))
         else:
             response = requests.get(url, **kwargs)
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:

@@ -5,7 +5,6 @@ import os
 import ntpath
 import shutil
 
-from checksumdir import dirhash
 from django.conf import settings
 from rest_framework import status, mixins
 from rest_framework.decorators import action
@@ -17,7 +16,7 @@ from rest_framework.viewsets import GenericViewSet
 from substrapp import ledger
 from substrapp.models import DataSample, DataManager
 from substrapp.serializers import DataSampleSerializer, LedgerDataSampleSerializer
-from substrapp.utils import store_datasamples_archive
+from substrapp.utils import store_datasamples_archive, get_dir_hash
 from substrapp.views.utils import find_primary_key_error, LedgerException, ValidationException, \
     get_success_create_code
 from substrapp.ledger_utils import query_ledger, LedgerError, LedgerTimeout, LedgerConflict
@@ -108,8 +107,8 @@ class DataSampleViewSet(mixins.CreateModelMixin,
                 }
 
         else:  # files must be available on local filesystem
-            path = request.POST.get('path')
-            paths = request.POST.getlist('paths')
+            path = request.data.get('path')
+            paths = request.data.get('paths') or []
 
             if path and paths:
                 raise Exception('Cannot use path and paths together.')
@@ -135,7 +134,7 @@ class DataSampleViewSet(mixins.CreateModelMixin,
                 if not os.path.isdir(path):
                     raise Exception(f'One of your paths does not exist, '
                                     f'is not a directory or is not an absolute path: {path}')
-                pkhash = dirhash(path, 'sha256')
+                pkhash = get_dir_hash(path)
                 try:
                     data[pkhash]
                 except KeyError:
@@ -195,7 +194,7 @@ class DataSampleViewSet(mixins.CreateModelMixin,
 
     def create(self, request, *args, **kwargs):
         test_only = request.data.get('test_only', False)
-        data_manager_keys = request.data.getlist('data_manager_keys', [])
+        data_manager_keys = request.data.get('data_manager_keys') or []
 
         try:
             data, st = self._create(request, data_manager_keys, test_only)
@@ -220,17 +219,11 @@ class DataSampleViewSet(mixins.CreateModelMixin,
         return Response(data, status=status.HTTP_200_OK)
 
     def validate_bulk_update(self, data):
-        try:
-            data_manager_keys = data.getlist('data_manager_keys')
-        except KeyError:
-            data_manager_keys = []
+        data_manager_keys = data.get('data_manager_keys')
         if not data_manager_keys:
             raise Exception('Please pass a non empty data_manager_keys key param')
 
-        try:
-            data_sample_keys = data.getlist('data_sample_keys')
-        except KeyError:
-            data_sample_keys = []
+        data_sample_keys = data.get('data_sample_keys')
         if not data_sample_keys:
             raise Exception('Please pass a non empty data_sample_keys key param')
 

@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import json
 
 import mock
 
@@ -56,10 +57,14 @@ class AlgoQueryTests(APITestCase):
         data = {
             'file': self.algo,
             'description': self.data_description,  # fake it
-            'name': 'super top algo',
-            'objective_key': get_hash(self.objective_description),
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
+            'json': json.dumps({
+                'name': 'super top algo',
+                'objective_key': get_hash(self.objective_description),
+                'permissions': {
+                    'public': True,
+                    'authorized_ids': [],
+                },
+            }),
         }
 
         return expected_hash, data
@@ -70,10 +75,14 @@ class AlgoQueryTests(APITestCase):
         data = {
             'file': self.algo_zip,
             'description': self.data_description,  # fake it
-            'name': 'super top algo',
-            'objective_key': get_hash(self.objective_description),
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
+            'json': json.dumps({
+                'name': 'super top algo',
+                'objective_key': get_hash(self.objective_description),
+                'permissions': {
+                    'public': True,
+                    'authorized_ids': [],
+                },
+            })
         }
 
         return expected_hash, data
@@ -139,10 +148,14 @@ class AlgoQueryTests(APITestCase):
         data = {
             'file': self.algo,
             'description': self.data_description,
-            'name': 'super top algo',
-            'objective_key': 'non existing objectivexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
+            'json': json.dumps({
+                'name': 'super top algo',
+                'objective_key': 'non existing objectivexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                'permissions': {
+                    'public': True,
+                    'authorized_ids': [],
+                },
+            }),
         }
         extra = {
             'HTTP_ACCEPT': 'application/json;version=0.0',
@@ -163,63 +176,24 @@ class AlgoQueryTests(APITestCase):
             data = {
                 'name': 'super top algo',
                 'objective_key': get_hash(self.objective_description),
-                'permissions_public': True,
-                'permissions_authorized_ids': [],
+                'permissions': {
+                    'public': True,
+                    'authorized_ids': [],
+                },
             }
-            response = self.client.post(url, data, format='multipart', **extra)
+            response = self.client.post(url, data, format='json', **extra)
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
             # missing ledger field
             data = {
                 'file': self.algo,
                 'description': self.data_description,
-                'objective_key': get_hash(self.objective_description),
+                'json': json.dumps({
+                    'objective_key': get_hash(self.objective_description),
+                })
             }
             response = self.client.post(url, data, format='multipart', **extra)
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_add_algo_no_version(self):
-
-        self.add_default_objective()
-
-        url = reverse('substrapp:algo-list')
-
-        data = {
-            'file': self.algo,
-            'description': self.data_description,
-            'name': 'super top algo',
-            'objective_key': get_hash(self.objective_description),
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
-        }
-        response = self.client.post(url, data, format='multipart')
-        r = response.json()
-
-        self.assertEqual(r, {'detail': 'A version is required.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)
-
-    def test_add_algo_wrong_version(self):
-
-        self.add_default_objective()
-
-        url = reverse('substrapp:algo-list')
-
-        data = {
-            'file': self.algo,
-            'description': self.data_description,
-            'name': 'super top algo',
-            'objective_key': get_hash(self.objective_description),
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
-        }
-        extra = {
-            'HTTP_ACCEPT': 'application/json;version=-1.0',
-        }
-        response = self.client.post(url, data, format='multipart', **extra)
-        r = response.json()
-
-        self.assertEqual(r, {'detail': 'Invalid version in "Accept" header.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)
 
     def test_get_algo_files(self):
         algo = Algo.objects.create(file=self.algo)
@@ -234,20 +208,3 @@ class AlgoQueryTests(APITestCase):
             response = self.client.get(f'/algo/{algo.pkhash}/file/', **extra)
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(algo.pkhash, compute_hash(response.getvalue()))
-
-    def test_get_algo_files_no_version(self):
-        algo = Algo.objects.create(file=self.algo)
-        response = self.client.get(f'/algo/{algo.pkhash}/file/')
-        r = response.json()
-        self.assertEqual(r, {'detail': 'A version is required.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)
-
-    def test_get_algo_files_wrong_version(self):
-        algo = Algo.objects.create(file=self.algo)
-        extra = {
-            'HTTP_ACCEPT': 'application/json;version=-1.0',
-        }
-        response = self.client.get(f'/algo/{algo.pkhash}/file/', **extra)
-        r = response.json()
-        self.assertEqual(r, {'detail': 'Invalid version in "Accept" header.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)

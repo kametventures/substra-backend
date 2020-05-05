@@ -107,7 +107,7 @@ DJANGO_SETTINGS_MODULE=backend.settings.common celery -A backend beat -l info
 
 ## Launch the servers
 
-Go in the `backend` folder and run the server locally:  
+Go in the `backend` folder and run the server locally:
 :warning: <p style="color: red">Be very careful, --settings is different here, `server` is needed.</p>
 
 ```shell
@@ -142,11 +142,10 @@ BACKEND_ORG=chu-nantes ./backend/manage.py add_user substra 'p@$swr0d44' --setti
 ## Test with unit and functional tests
 
 ```shell
-    DJANGO_SETTINGS_MODULE=backend.settings.test coverage run manage.py test
-    coverage report    # For shell report
-    coverage html      # For HTML report
+    make test
+    make coverage  # For shell report
+    coverage html  # For HTML report
 ```
-
 
 ## Test by creating a traintuple
 
@@ -179,16 +178,6 @@ As the trainDataSample passed are also created by chu-nantes, the chu-nantes cel
 You can check `http://localhost:8000/traintuple/` or `http://localhost:8001/traintuple/` to check if the status of your newly created traintuple is set to `training` after 10 sec (celery worker periodic task period).
 You can also check a new objective has been added in `medias/chu-nantes` with a `metrics.py` file but not `description.md` file.
 
-## Testing with the browsable API
-
-For displaying data in a web browser, you will have to override your headers, especially the Accept header for specifiying the version.
-You can use the modheader extension available [here for Chrome](https://chrome.google.com/webstore/detail/modheader/idgpnmonknjnojddfkpgkljpfnnfcklj) and [here for Firefox](https://addons.mozilla.org/en-US/firefox/addon/modheader-firefox/):
-
-You can then configure it like that:
-![](assets/modheader_config.png)
-
-Now you can reach `http://localhost:8000/` and `http://localhost:8001/` :tada:
-
 ## Launching with docker
 
 As for hlf-k8s, you can launch all the services in docker containers.
@@ -212,15 +201,15 @@ Check your services are correctly started with `docker ps -a`.
 
 ## Expiry token period
 
-Two global environment variables `ACCESS_TOKEN_LIFETIME` and `EXPIRY_TOKEN_LIFETIME` expressed in minutes can be set for dealing with expiry token period.  
-The first one `ACCESS_TOKEN_LIFETIME` deals with JWT Authentication.  
-THe second one `EXPIRY_TOKEN_LIFETIME` deals with simple token expiration.  
+Two global environment variables `ACCESS_TOKEN_LIFETIME` and `EXPIRY_TOKEN_LIFETIME` expressed in minutes can be set for dealing with expiry token period.
+The first one `ACCESS_TOKEN_LIFETIME` deals with JWT Authentication.
+THe second one `EXPIRY_TOKEN_LIFETIME` deals with simple token expiration.
 By default, set to 24*60 min i.e 24h.
 
 ## Testing fabric-sdk-py
 
-A directory named `fabric-sdk-py_tests` is available to the root of this project.  
-If you launch a hlf-k8s setup, you will be able to play with theses tests.  
+A directory named `fabric-sdk-py_tests` is available to the root of this project.
+If you launch a hlf-k8s setup, you will be able to play with theses tests.
 For `fabric-sdk-py-query-invoke.py`, be sure to have run the `generateNetworkFile.py` script for producing the network.json file needed.
 
 ## Miscellaneous
@@ -230,4 +219,3 @@ For `fabric-sdk-py-query-invoke.py`, be sure to have run the `generateNetworkFil
 ## License
 
 This project is developed under the Apache License, Version 2.0 (Apache-2.0), located in the [LICENSE](./LICENSE) file.
-

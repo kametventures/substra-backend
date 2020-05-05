@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import json
 
 import mock
 
@@ -38,11 +39,15 @@ class DataManagerQueryTests(APITestCase):
     def get_default_datamanager_data(self):
         expected_hash = get_hash(self.data_data_opener)
         data = {
-            'name': 'slide opener',
-            'type': 'images',
-            'permissions_public': True,
-            'permissions_authorized_ids': [],
-            'objective_key': '',
+            'json': json.dumps({
+                'name': 'slide opener',
+                'type': 'images',
+                'permissions': {
+                    'public': True,
+                    'authorized_ids': [],
+                },
+                'objective_key': '',
+            }),
             'description': self.data_description,
             'data_opener': self.data_data_opener
         }
@@ -109,29 +114,3 @@ class DataManagerQueryTests(APITestCase):
         }
         response = self.client.post(url, data, format='multipart', **extra)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_add_datamanager_no_version(self):
-
-        _, data = self.get_default_datamanager_data()
-
-        url = reverse('substrapp:data_manager-list')
-
-        response = self.client.post(url, data, format='multipart')
-        r = response.json()
-
-        self.assertEqual(r, {'detail': 'A version is required.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)
-
-    def test_add_datamanager_wrong_version(self):
-
-        _, data = self.get_default_datamanager_data()
-
-        url = reverse('substrapp:data_manager-list')
-        extra = {
-            'HTTP_ACCEPT': 'application/json;version=-1.0',
-        }
-        response = self.client.post(url, data, format='multipart', **extra)
-        r = response.json()
-
-        self.assertEqual(r, {'detail': 'Invalid version in "Accept" header.'})
-        self.assertEqual(response.status_code, status.HTTP_406_NOT_ACCEPTABLE)
