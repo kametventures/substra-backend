@@ -130,7 +130,7 @@ deploy:
           organization:
             name: MyOrg1
           peer:
-            host: network-org-1-peer-1.org-1
+            host: network-org-1-peer-1-hlf-peer.org-1
             port: 7051
             mspID: MyOrg1MSP
           persistence:
@@ -144,6 +144,14 @@ deploy:
           users:
             - name: "node-1"
               secret: "p@$swr0d44"
+          extraEnv:
+            # Should be a json list
+            - name: CORS_ORIGIN_WHITELIST
+              value: '["http://substra-frontend.node-1.com/"]'
+            - name: CORS_ALLOW_CREDENTIALS
+              value: "true"
+            - name: DEFAULT_THROTTLE_RATES
+              value: '120'
 
       - name: backend-org-2
         chartPath: charts/substra-backend
@@ -172,7 +180,7 @@ deploy:
           organization:
             name: MyOrg2
           peer:
-            host: network-org-2-peer-1.org-2
+            host: network-org-2-peer-1-hlf-peer.org-2
             port: 7051
             mspID: MyOrg2MSP
           persistence:
@@ -186,6 +194,14 @@ deploy:
           users:
             - name: "node-2"
               secret: "p@$swr0d45"
+          extraEnv:
+            # Should be a json list
+            - name: CORS_ORIGIN_WHITELIST
+              value: '["http://substra-frontend.node-2.com/"]'
+            - name: CORS_ALLOW_CREDENTIALS
+              value: "true"
+            - name: DEFAULT_THROTTLE_RATES
+              value: '120'
 
 profiles:
   - name: prod

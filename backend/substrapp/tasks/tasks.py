@@ -52,6 +52,7 @@ TAG_VALUE_FOR_TRANSFER_BUCKET = "transferBucket"
 ACCESS_KEY = os.getenv('BUCKET_TRANSFER_ID')
 SECRET_KEY = os.getenv('BUCKET_TRANSFER_SECRET')
 BUCKET_NAME = os.getenv('BUCKET_TRANSFER_NAME')
+S3_PREFIX = os.getenv('BUCKET_TRANSFER_PREFIX')
 
 
 class TasksError(Exception):
@@ -338,6 +339,10 @@ def prepare_opener(directory, tuple_):
 
     datamanager = DataManager.objects.get(pk=data_opener_hash)
 
+    # verify that local storage opener file exists
+    if not os.path.exists(datamanager.data_opener.path) or not os.path.isfile(datamanager.data_opener.path):
+        raise Exception(f'DataOpener file ({datamanager.data_opener.path}) is missing in local storage')
+
     # verify that local db opener file is not corrupted
     if get_hash(datamanager.data_opener.path) != data_opener_hash:
         raise Exception('DataOpener Hash in Subtuple is not the same as in local db')
@@ -357,6 +362,13 @@ def prepare_data_sample(directory, tuple_):
     from substrapp.models import DataSample
     for data_sample_key in tuple_['dataset']['keys']:
         data_sample = DataSample.objects.get(pk=data_sample_key)
+
+        if not os.path.exists(data_sample.path) or not os.path.isdir(data_sample.path):
+            raise Exception(f'Data Sample ({data_sample.path}) is missing in local storage')
+
+        if not os.listdir(data_sample.path):
+            raise Exception(f'Data Sample ({data_sample.path}) is empty in local storage')
+
         data_sample_hash = get_dir_hash(data_sample.path)
         if data_sample_hash != data_sample_key:
             raise Exception('Data Sample Hash in tuple is not the same as in local db')
@@ -380,7 +392,7 @@ def build_subtuple_folders(subtuple):
     subtuple_directory = get_subtuple_directory(subtuple)
     create_directory(subtuple_directory)
 
-    for folder in ['opener', 'data', 'model', 'pred', 'metrics']:
+    for folder in ['opener', 'data', 'model', 'pred', 'metrics', 'export']:
         create_directory(path.join(subtuple_directory, folder))
 
     return subtuple_directory
@@ -470,6 +482,12 @@ def prepare_tuple(subtuple, tuple_type):
 
     compute_plan_id = None
     worker_queue = f"{settings.LEDGER['name']}.worker"
+
+    # Early return if subtuple status is not todo
+    # Can happen if we re-process all events
+    if subtuple['status'] != 'todo':
+        logger.error(f'Tuple task ({tuple_type}) not in "todo" state ({subtuple["status"]}).\n{subtuple}')
+        return
 
     if 'computePlanID' in subtuple and subtuple['computePlanID']:
         compute_plan_id = subtuple['computePlanID']
@@ -642,6 +660,12 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
     else:
         environment = {}
 
+    # Use tag to tranfer or not performances and models
+    tag = subtuple.get("tag")
+    if tuple_type == TESTTUPLE_TYPE:
+        if tag and TAG_VALUE_FOR_TRANSFER_BUCKET in tag:
+            environment['TESTTUPLE_TAG'] = TAG_VALUE_FOR_TRANSFER_BUCKET
+
     container_name = f'{tuple_type}_{subtuple["key"][0:8]}_{TUPLE_COMMANDS[tuple_type]}'
     command = generate_command(tuple_type, subtuple, rank)
 
@@ -678,8 +702,8 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
             environment=environment
         )
 
-        model_path = path.join(subtuple_directory, 'model')
         pred_path = path.join(subtuple_directory, 'pred')
+        export_path = path.join(subtuple_directory, 'export')
 
         # load performance
         with open(path.join(pred_path, 'perf.json'), 'r') as perf_file:
@@ -687,10 +711,8 @@ def _do_task(client, subtuple_directory, tuple_type, subtuple, compute_plan_id, 
 
         result['global_perf'] = perf['all']
 
-        # Use tag to tranfer or not performances and models
-        tag = subtuple.get("tag")
         if tag and TAG_VALUE_FOR_TRANSFER_BUCKET in tag:
-            transfer_to_bucket(subtuple['key'], [pred_path, model_path])
+            transfer_to_bucket(subtuple['key'], [pred_path, export_path])
 
     return result
 
@@ -699,6 +721,7 @@ def prepare_volumes(client, subtuple_directory, tuple_type, compute_plan_id, com
 
     model_path = path.join(subtuple_directory, 'model')
     pred_path = path.join(subtuple_directory, 'pred')
+    export_path = path.join(subtuple_directory, 'export')
 
     symlinks_volume = {}
     data_path = path.join(subtuple_directory, 'data')
@@ -720,6 +743,7 @@ def prepare_volumes(client, subtuple_directory, tuple_type, compute_plan_id, com
 
     if tuple_type == TESTTUPLE_TYPE:
         volumes[pred_path] = {'bind': '/sandbox/pred', 'mode': 'rw'}
+        volumes[export_path] = {'bind': '/sandbox/export', 'mode': 'rw'}
 
     model_volume = {
         model_path: {'bind': MODEL_FOLDER, 'mode': 'rw'}
@@ -875,7 +899,7 @@ def transfer_to_bucket(tuple_key, paths):
             's3',
             aws_access_key_id=ACCESS_KEY,
             aws_secret_access_key=SECRET_KEY)
-        s3.upload_file(tar_path, BUCKET_NAME, tar_name)
+        s3.upload_file(tar_path, BUCKET_NAME, f'{S3_PREFIX}/{tar_name}' if S3_PREFIX else tar_name)
 
 
 @timeit
