@@ -9,8 +9,7 @@ from substrapp.views import ObjectiveViewSet, DataSampleViewSet, DataManagerView
     AlgoViewSet, TrainTupleViewSet, TestTupleViewSet, ModelViewSet, TaskViewSet, \
     ComputePlanViewSet, ObjectivePermissionViewSet, AlgoPermissionViewSet, DataManagerPermissionViewSet, \
     ModelPermissionViewSet, CompositeTraintupleViewSet, CompositeAlgoViewSet, CompositeAlgoPermissionViewSet, \
-    AggregateAlgoViewSet, AggregateAlgoPermissionViewSet, AggregateTupleViewSet
-
+    AggregateAlgoViewSet, AggregateAlgoPermissionViewSet, AggregateTupleViewSet, LogViewSet
 
 # Create a router and register our viewsets with it.
 
@@ -34,6 +33,7 @@ router.register(r'composite_algo', CompositeAlgoViewSet, basename='composite_alg
 router.register(r'composite_algo', CompositeAlgoPermissionViewSet, basename='composite_algo')
 router.register(r'aggregate_algo', AggregateAlgoViewSet, basename='aggregate_algo')
 router.register(r'aggregate_algo', AggregateAlgoPermissionViewSet, basename='aggregate_algo')
+router.register(r'log', LogViewSet, basename='log')
 
 
 urlpatterns = [
