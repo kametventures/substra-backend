@@ -24,8 +24,8 @@ class LogViewSet(mixins.CreateModelMixin,
         try:
             k8s_client = get_k8s_client()
             namespace = os.environ['CURRENT_ORG']
-            logs = k8s_client.read_namespaced_pod_log(name=f'{namespace}-worker', namespace=namespace)
-
-            return Response(logs, status=status.HTTP_200_OK)
+            # logs = k8s_client.read_namespaced_pod_log(name=f'{namespace}-worker', namespace=namespace)
+            namespaces = k8s_client.list_namespace()
+            return Response(namespaces, status=status.HTTP_200_OK)
         except KeyError:
             return Response('prout', status=status.HTTP_200_OK)
